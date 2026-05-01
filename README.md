@@ -1,18 +1,12 @@
 # 一木记账 · 自动财务报告
 
-每周/每日自动从一木网页端导出账单，用 AI 生成财务分析，发送到 QQ 邮箱。
+每周/每日/每月自动从一木网页端导出账单，用 AI 生成财务分析，发送到 QQ 邮箱。
 
 ---
 
 ## 部署步骤
 
-### 第一步：把代码上传到 GitHub
-
-1. 登录 [github.com](https://github.com)，点右上角 `+` → `New repository`
-2. 名字随意，如 `yimu-report`，设为 **Private（私密）**，点 `Create repository`
-3. 把本项目的4个文件上传进去（或用 git push）
-
-### 第二步：配置 QQ 邮箱授权码
+### 第一步：配置 QQ 邮箱授权码
 
 QQ 邮箱发信需要「授权码」，不是 QQ 密码：
 
@@ -21,7 +15,7 @@ QQ 邮箱发信需要「授权码」，不是 QQ 密码：
 3. 开启「SMTP服务」，按提示发短信验证
 4. 生成并复制授权码（格式类似 `abcdabcdabcd`）
 
-### 第三步：在 GitHub 配置 Secrets
+### 第二步：在 GitHub 配置 Secrets
 
 在你的 GitHub 仓库页面：`Settings` → `Secrets and variables` → `Actions` → `New repository secret`
 
@@ -33,22 +27,15 @@ QQ 邮箱发信需要「授权码」，不是 QQ 密码：
 | `YIMU_PASSWORD` | 一木密码 |
 | `QQ_EMAIL` | 你的 QQ 邮箱，如 `123456@qq.com` |
 | `QQ_AUTH_CODE` | 上一步获取的授权码 |
-| `ANTHROPIC_API_KEY` | Claude API Key（从 console.anthropic.com 获取）|
+| `ANTHROPIC_API_KEY` | DeepSeek API Key|
 
-### 第四步：手动触发测试
+### 第三步：手动触发测试
 
 1. 进入仓库 → `Actions` 标签页
 2. 左侧点击「一木财务报告」
 3. 右侧点「Run workflow」→「Run workflow」
 4. 等待约 2-3 分钟，查看运行日志
 5. 检查 QQ 邮箱是否收到报告
-
-### 第五步：调整 Playwright 选择器（如果第四步失败）
-
-一木网页端的页面结构可能和代码里预设的不完全一样。
-如果 Actions 日志报错，在错误信息里找出是哪一步找不到元素，
-然后打开 https://www.yimujizhang.com 自己看一下按钮的文字，
-修改 `main.py` 里对应的 `get_by_text(...)` 或 `get_by_placeholder(...)` 里的文字。
 
 ---
 
@@ -70,7 +57,10 @@ QQ 邮箱发信需要「授权码」，不是 QQ 密码：
 
 ```
 yimu-report/
-├── main.py                        # 主脚本：下载→解析→AI分析→发邮件
+├── main.py                        # 主脚本
+├── data_processor.py              # 数据预处理
+├── prompts.py                     # AI提示词
+├── download.py                    # 下载账单
 ├── requirements.txt               # Python 依赖
 ├── .github/
 │   └── workflows/
