@@ -1,0 +1,29 @@
+name: 一木财务报告 - 周报
+
+on:
+  # schedule:
+  #   - cron: "0 16 * * 0"      # 每周日 UTC 16:00 (北京时间周一 00:00)
+  workflow_dispatch:
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    env:
+      REPORT_MODE: weekly
+      YIMU_AUTH_STATE: ${{ secrets.YIMU_AUTH_STATE }}
+      QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
+      QQ_AUTH_CODE: ${{ secrets.QQ_AUTH_CODE }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+      - name: 生成并发送报告
+        run: python main.py

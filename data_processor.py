@@ -1,0 +1,291 @@
+# data_processor.py
+import io
+import pandas as pd
+from datetime import datetime, timedelta
+
+MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
+
+
+def parse_transactions(excel_bytes: bytes, mode: str, reference_date: datetime = None) -> tuple[pd.DataFrame, str]:
+    """
+    解析 Excel，筛选指定时间范围的数据，返回 (DataFrame, 时间描述)
+    自动定位列名，合并一级/二级分类，计算真实净支出。
+
+    改动：新增 reference_date 参数，便于生成上一周期数据（测试或非当前时刻调用）。
+    """
+    df = pd.read_excel(io.BytesIO(excel_bytes))
+    print(f"原始数据列：{df.columns.tolist()}  行数：{len(df)}")
+
+    def find_col(keywords):
+        for kw in keywords:
+            match = next((c for c in df.columns if kw in str(c)), None)
+            if match:
+                return match
+        return None
+
+    # 关键列定位
+    date_col = find_col(["日期", "时间", "Date"])
+    amount_col = find_col(["金额", "Amount"])
+    type_col = find_col(["类型", "收支", "Type"])
+    cat_col = find_col(["类别", "分类", "Category"])
+    sub_cat_col = find_col(["二级分类", "Subcategory"])
+    account_col = find_col(["账户", "Account"])
+    refund_col = find_col(["退款", "Refund"])
+    disc_col = find_col(["优惠", "Discount"])
+    reimb_col = find_col(["报销金额", "报销", "Reimbursement"])
+    note_col = find_col(["备注", "摘要", "Note", "Remark"])
+    tag_col = find_col(["标签", "Tag"])
+    addr_col = find_col(["地址", "Address", "Location"])
+
+    if not all([date_col, amount_col, type_col, cat_col]):
+        raise ValueError(f"核心列名识别失败，实际列：{df.columns.tolist()}")
+
+    # 日期处理 & 时间范围筛选
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col])
+
+    days = MODE_DAYS_MAP.get(mode, 7)
+
+    # 改动：支持 reference_date，方便生成上一周期时段
+    now = reference_date if reference_date else datetime.now()
+    if mode.startswith("previous_"):  # 新增上一周期模式解析
+        base_mode = mode.replace("previous_", "")
+        base_days = MODE_DAYS_MAP.get(base_mode, 7)
+        # 结束时间往前推 base_days
+        end = now - timedelta(days=base_days)
+        start = end - timedelta(days=base_days)
+        period_label = f"过去 {base_days} 天（上一周期）"
+        df = df[(df[date_col] >= start) & (df[date_col] < end)].copy()
+    else:
+        cutoff = now - timedelta(days=days)
+        period_label = f"过去 {days} 天"
+        df = df[df[date_col] >= cutoff].copy()
+
+    # 重命名标准列名（核心列 + 存在的可选列）
+    rename_map = {
+        date_col:   "日期",
+        amount_col: "金额",
+        type_col:   "类型",
+        cat_col:    "分类",
+    }
+    if sub_cat_col:
+        rename_map[sub_cat_col] = "二级分类"   # ← 新增这一行
+
+    for col, name in [(account_col, "账户"), (note_col, "备注"), (tag_col, "标签"),
+                    (disc_col, "优惠"), (refund_col, "退款"), (reimb_col, "报销"),
+                    (addr_col, "地址")]:
+        if col:
+            rename_map[col] = name
+    df = df.rename(columns=rename_map)
+
+    # 金额标准化（使用重命名后的列名）
+    df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0).abs()
+    for col in ["退款", "优惠", "报销"]:
+        if col not in df.columns:
+            df[col] = 0.0
+        else:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).abs()
+
+    # 计算实际净支出（扣除退款/优惠/报销，最低为 0，防止出现负值）
+    is_expense = df["类型"].str.contains("支出", na=False)
+    df["实际金额"] = df["原始金额"]
+    df.loc[is_expense, "实际金额"] = (
+        df.loc[is_expense, "原始金额"]
+        - df.loc[is_expense, "退款"]
+        - df.loc[is_expense, "优惠"]
+        - df.loc[is_expense, "报销"]
+    ).clip(lower=0)
+
+    # 最终分类：优先使用二级分类（若非空），否则使用一级分类
+    sub_renamed = rename_map.get(sub_cat_col) if sub_cat_col else None
+    df["最终分类"] = df["分类"]
+    if sub_renamed and sub_renamed in df.columns:
+        has_sub = df[sub_renamed].notna() & (df[sub_renamed].astype(str).str.strip() != "")
+        df.loc[has_sub, "最终分类"] = df.loc[has_sub, sub_renamed]
+
+    return df, period_label
+
+
+def summarize(df: pd.DataFrame, period_label: str) -> str:
+    """根据筛选后的 DataFrame 生成详细的文本摘要（供 AI 分析使用）"""
+    income_df = df[df["类型"].str.contains("收入", na=False)]
+    expense_df = df[df["类型"].str.contains("支出", na=False)]
+
+    total_income = income_df["原始金额"].sum()
+    raw_expense = expense_df["原始金额"].sum()
+    total_refund = expense_df["退款"].sum() if "退款" in expense_df.columns else 0
+    total_disc = expense_df["优惠"].sum() if "优惠" in expense_df.columns else 0
+    total_reimb = expense_df["报销"].sum() if "报销" in expense_df.columns else 0
+    real_expense = expense_df["实际金额"].sum()
+    net_balance = total_income - real_expense
+
+    lines = [
+        f"📊 财务数据摘要（{period_label}）",
+        f"本周期账面原始总支出 ¥{raw_expense:,.2f}，"
+        f"经优惠(¥{total_disc:,.2f})、退款(¥{total_refund:,.2f})、报销抵扣(¥{total_reimb:,.2f})后，"
+        f"个人真实净支出为 ¥{real_expense:,.2f}。",
+        "",
+        "1. 核心指标（真实现金流）",
+        f"- 💰总收入：¥{total_income:,.2f}",
+        f"- 💸 真实净支出：¥{real_expense:,.2f}",
+        f"- 🏦净结余：¥{net_balance:,.2f}",
+        f"- 📈储蓄率：{net_balance/total_income*100:.1f}%" if total_income > 0 else "- 储蓄率：无收入数据"
+    ]
+
+    # 收入来源明细
+    if total_income > 0:
+        lines += ["", "2. 收入来源明细"]
+        income_by_cat = income_df.groupby("最终分类")["原始金额"].sum().sort_values(ascending=False)
+        for cat, amt in income_by_cat.items():
+            lines.append(f"- {cat}：¥{amt:,.2f}（{amt/total_income*100:.1f}%）")
+
+    # 支出分类全景（按实际净支出）
+    lines += ["", "3. 支出分类全景（按实际净支出）"]
+    expense_by_cat = expense_df.groupby("最终分类")["实际金额"].sum().sort_values(ascending=False)
+    expense_by_cat = expense_by_cat[expense_by_cat > 0]
+    for cat, amt in expense_by_cat.items():
+        pct = amt / real_expense * 100 if real_expense else 0
+        lines.append(f"- {cat}：¥{amt:,.2f}（{pct:.1f}%）")
+
+    # 频繁小额支出（单笔≤30元，出现≥5次）
+    small_expenses = expense_df[expense_df["实际金额"] <= 30]
+    if not small_expenses.empty:
+        freq_small = small_expenses.groupby("最终分类").agg(
+            次数=("实际金额", "count"),
+            总计=("实际金额", "sum")
+        ).sort_values(by="次数", ascending=False)
+        freq_small = freq_small[freq_small["次数"] >= 5]
+        if not freq_small.empty:
+            lines += ["", "☕ 频繁小额支出（单笔≤30元，出现5次及以上）"]
+            for cat, row in freq_small.iterrows():
+                lines.append(f"- {cat}：共 {row['次数']} 次，累计 ¥{row['总计']:,.2f}")
+
+    # 区域消费聚合
+    if "地址" in df.columns:
+        addr_expense = expense_df[expense_df["地址"].notna() & (expense_df["地址"].astype(str).str.strip() != "")]
+        if not addr_expense.empty:
+            lines += ["", "📍 区域消费聚合（Top 10 地址）"]
+            addr_group = addr_expense.groupby("地址")["实际金额"].sum().sort_values(ascending=False).head(10)
+            for addr, amt in addr_group.items():
+                lines.append(f"- {addr}：¥{amt:,.2f}")
+
+    # 单笔大额支出 Top 10
+    lines += ["", "🚨 单笔大额支出 Top 10"]
+    has_note = "备注" in df.columns
+    has_tag = "标签" in df.columns
+    for _, row in expense_df.nlargest(10, "实际金额").iterrows():
+        extras = []
+        if has_tag and pd.notna(row.get("标签")) and str(row.get("标签")).strip():
+            extras.append(f"🏷️ {row['标签']}")
+        if has_note and pd.notna(row.get("备注")) and str(row.get("备注")).strip():
+            extras.append(f"📝 {row['备注']}")
+        extra_str = f"（{' | '.join(extras)}）" if extras else ""
+        lines.append(f"- {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
+
+    return "\n".join(lines)
+
+
+# ===================== 新增对比功能 =====================
+
+def _extract_metrics(df: pd.DataFrame) -> dict:
+    """
+    从处理后的 DataFrame 提取核心指标，供对比使用。
+    返回字典包含：总收入、净支出、净结余、支出分类、小额高频统计。
+    """
+    income_df = df[df["类型"].str.contains("收入", na=False)]
+    expense_df = df[df["类型"].str.contains("支出", na=False)]
+
+    total_income = income_df["原始金额"].sum()
+    real_expense = expense_df["实际金额"].sum()
+    net_balance = total_income - real_expense
+
+    # 分类支出字典
+    expense_by_cat = expense_df.groupby("最终分类")["实际金额"].sum().to_dict()
+
+    # 小额高频统计
+    small_expenses = expense_df[expense_df["实际金额"] <= 30]
+    freq_small = {}
+    if not small_expenses.empty:
+        freq = small_expenses.groupby("最终分类").agg(
+            次数=("实际金额", "count"),
+            总计=("实际金额", "sum")
+        )
+        freq = freq[freq["次数"] >= 5]
+        for cat, row in freq.iterrows():
+            freq_small[cat] = {"次数": int(row["次数"]), "总额": row["总计"]}
+
+    return {
+        "总收入": total_income,
+        "净支出": real_expense,
+        "净结余": net_balance,
+        "支出分类": expense_by_cat,
+        "小额高频": freq_small,
+    }
+
+
+def generate_comparison_summary(df_current, df_previous,
+                                period_label_current: str,
+                                period_label_previous: str) -> str:
+    """
+    对比两个周期的财务数据，生成文本摘要（AI 可直接解读）。
+
+    参数：
+        df_current:  当前周期的 DataFrame（已 parse 处理）
+        df_previous: 上一周期的 DataFrame（已 parse 处理）
+        period_label_current:  当前周期描述，如 '本周'
+        period_label_previous: 上一周期描述，如 '上周'
+    """
+    cur = _extract_metrics(df_current)
+    prev = _extract_metrics(df_previous)
+
+    lines = [f"同期对比：{period_label_previous} → {period_label_current}"]
+
+    # 1. 核心指标变动
+    lines.append("\n【核心指标变动】")
+    # 净支出
+    exp_cur = cur["净支出"]
+    exp_prev = prev["净支出"]
+    exp_change = exp_cur - exp_prev
+    exp_pct = (exp_change / exp_prev * 100) if exp_prev else 0
+    lines.append(f"净支出：¥{exp_prev:.2f} → ¥{exp_cur:.2f}，{'+' if exp_change>0 else ''}¥{exp_change:.2f}（{exp_pct:+.1f}%）")
+
+    # 净结余
+    bal_cur = cur["净结余"]
+    bal_prev = prev["净结余"]
+    bal_change = bal_cur - bal_prev
+    lines.append(f"净结余：¥{bal_prev:.2f} → ¥{bal_cur:.2f}，{'+' if bal_change>0 else ''}¥{bal_change:.2f}")
+
+    # 总收入（如果存在）
+    inc_cur = cur["总收入"]
+    inc_prev = prev["总收入"]
+    if inc_prev > 0 or inc_cur > 0:
+        lines.append(f"总收入：¥{inc_prev:.2f} → ¥{inc_cur:.2f}")
+
+    # 2. 分类支出变动
+    lines.append("\n【分类支出变动（按真实净支出）】")
+    cat_cur = cur["支出分类"]
+    cat_prev = prev["支出分类"]
+    all_cats = sorted(set(cat_cur.keys()) | set(cat_prev.keys()),
+                      key=lambda c: cat_cur.get(c, 0) + cat_prev.get(c, 0), reverse=True)
+    for cat in all_cats:
+        prev_val = cat_prev.get(cat, 0)
+        cur_val = cat_cur.get(cat, 0)
+        change = cur_val - prev_val
+        if prev_val == 0:
+            lines.append(f"  {cat}：¥{prev_val:.2f} → ¥{cur_val:.2f}（新增）")
+        else:
+            pct = change / prev_val * 100
+            lines.append(f"  {cat}：¥{prev_val:.2f} → ¥{cur_val:.2f}，{'+' if change>0 else ''}¥{change:.2f}（{pct:+.1f}%）")
+
+    # 3. 高频小额变动（简要）
+    small_cur = cur["小额高频"]
+    small_prev = prev["小额高频"]
+    all_small_cats = set(small_cur.keys()) | set(small_prev.keys())
+    if all_small_cats:
+        lines.append("\n【高频小额变动（单笔≤30元，出现≥5次的类别）】")
+        for cat in all_small_cats:
+            p_cnt = small_prev.get(cat, {"次数": 0, "总额": 0.0})
+            c_cnt = small_cur.get(cat, {"次数": 0, "总额": 0.0})
+            lines.append(f"  {cat}：{p_cnt['次数']}次 ¥{p_cnt['总额']:.2f} → {c_cnt['次数']}次 ¥{c_cnt['总额']:.2f}")
+
+    return "\n".join(lines)
