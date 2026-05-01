@@ -71,12 +71,29 @@ def generate_report(summary: str, period_label: str, api_key: str, mode: str,
         comparison_summary=comparison_summary,
         previous_label=previous_label
     )
-    response = client.chat.completions.create(
-        model="deepseek-v4-flash",
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-v4-flash",
+            max_tokens=4000,          # 根据需要调整输出长度，过短可能不够详细，过长可能被截断
+            messages=[{"role": "user", "content": prompt}]
+        )
+        choice = response.choices[0]
+        content = choice.message.content
+        finish_reason = choice.finish_reason
+
+        if finish_reason == "length":
+            print("⚠️ 警告：AI 输出因 max_tokens 限制被截断，当前回答长度可能不足，请考虑继续增加 max_tokens")
+        elif finish_reason != "stop":
+            print(f"⚠️ 异常终止原因: {finish_reason}")
+
+        if not content or not content.strip():
+            print("❌ AI 返回内容为空")
+            return "（⚠️ AI 报告生成失败，请检查 API 账户或数据）"
+
+        return content
+    except Exception as e:
+        print(f"❌ 调用 DeepSeek API 失败: {e}")
+        return f"（⚠️ AI 报告生成失败：{e}）"
 
 # ======================== 第五步：发送邮件 ========================
 def send_email(subject: str, body: str, from_addr: str, to_addr: str, auth_code: str):
