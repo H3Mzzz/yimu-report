@@ -28,8 +28,8 @@ async def download_excel(auth_state: dict) -> bytes:
         print("登录状态已注入，进入主页...")
         page = await context.new_page()
         await page.goto(YIMU_URL, timeout=60000)
-        await page.wait_for_load_state("networkidle")
-
+        await page.wait_for_load_state("domcontentloaded")   
+        await page.wait_for_timeout(5000)
         # 验证登录状态
         if await page.query_selector("text=登 录") is not None:
             raise RuntimeError(
