@@ -62,6 +62,7 @@ yimu-report/
 ├── prompts.py                     # AI提示词
 ├── download.py                    # 下载账单
 ├── requirements.txt               # Python 依赖
+├── save_auth                      # 获取登录凭证
 ├── .github/
 │   └── workflows/
 │       └── report.yml             # GitHub Actions 定时任务配置
