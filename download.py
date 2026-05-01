@@ -38,7 +38,7 @@ async def download_excel(auth_state: dict) -> bytes:
         print("登录状态有效 ✓")
 
         # 等待页面数据同步
-        await page.wait_for_timeout(30000)
+        await page.wait_for_timeout(60000)
 
         # 点击设置图标（第二个 svg）
         print("点击设置图标...")
@@ -52,7 +52,7 @@ async def download_excel(auth_state: dict) -> bytes:
 
         # 拦截下载并确认导出 Excel
         print("确认导出，等待文件下载...")
-        async with page.expect_download(timeout=30000) as dl_info:
+        async with page.expect_download(timeout=60000) as dl_info:
             await page.get_by_text("导出 Excel").click()
 
         download = await dl_info.value
