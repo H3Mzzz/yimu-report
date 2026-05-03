@@ -2,3 +2,4 @@ openai
 playwright
 pandas
 openpyxl
+requests
