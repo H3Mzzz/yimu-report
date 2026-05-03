@@ -9,9 +9,9 @@ import xml.etree.ElementTree as ET
 
 # ======================== 坚果云 WebDAV 配置 ========================
 WEBDAV_BASE_URL = os.environ.get("WEBDAV_BASE_URL", "https://dav.jianguoyun.com/dav/")
-WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "")
-WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "")
-BACKUP_FOLDER = os.environ.get("WEBDAV_BACKUP_FOLDER", "")
+WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "h3mzzz@outlook.com")
+WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "ag96xnui866tc74w")
+BACKUP_FOLDER = os.environ.get("WEBDAV_BACKUP_FOLDER", "账单备份")
 
 
 def _get_folder_url():
@@ -187,3 +187,39 @@ def download_by_filename(filename: str):
     except requests.exceptions.RequestException as e:
         print(f"❌ 从坚果云下载失败 ({filename}): {e}")
         return None
+
+
+def delete_backup(filename: str) -> bool:
+    """删除指定文件"""
+    url = _get_file_url(filename)
+    try:
+        response = requests.delete(
+            url,
+            auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD),
+            timeout=15
+        )
+        if response.status_code in (200, 204):
+            print(f"🗑️ 已删除: {filename}")
+            return True
+        else:
+            print(f"⚠️ 删除失败 ({filename}): HTTP {response.status_code}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"❌ 删除请求失败 ({filename}): {e}")
+        return False
+
+
+def cleanup_old_backups(keep: int = 10):
+    """
+    清理旧备份，仅保留最新的 keep 个文件。
+    由于文件按名称（时间戳）降序排列，直接删除 keep 之后的所有文件。
+    """
+    files = list_backup_files()
+    if len(files) <= keep:
+        print(f"📦 共 {len(files)} 个备份，未超过保留上限 {keep}，无需清理")
+        return
+
+    to_delete = files[keep:]  # 跳过前 keep 个最新的
+    print(f"🧹 共 {len(files)} 个备份，将删除 {len(to_delete)} 个旧文件...")
+    for f in to_delete:
+        delete_backup(f["name"])
