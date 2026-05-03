@@ -21,7 +21,7 @@ import os
 import json
 import asyncio
 from download import download_excel
-from webdav import ensure_backup_folder, upload_backup
+from webdav import ensure_backup_folder, upload_backup, cleanup_old_backups
 
 
 async def main():
@@ -58,6 +58,9 @@ async def main():
     try:
         filename = upload_backup(excel_bytes)
         print(f"🎉 备份完成！文件: {filename}")
+
+        # 清理旧备份，仅保留最新 10 个
+        cleanup_old_backups(keep=10)
     except Exception as e:
         print(f"❌ 上传坚果云失败: {e}")
         raise
