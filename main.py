@@ -74,9 +74,12 @@ def generate_report(summary: str, period_label: str, api_key: str, mode: str,
     )
     try:
         response = client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model="deepseek-v4-pro",
             max_tokens=4000,          # 根据需要调整输出长度，过短可能不够详细，过长可能被截断
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            reasoning_effects="high",
+            extra_body={"thinking": {"type": "enabled"}}
+
         )
         choice = response.choices[0]
         content = choice.message.content
