@@ -1,36 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-一木账单自动财务报告脚本（GitHub Action 版）
+一木账单自动财务报告脚本
+
+数据获取流程：
+  1. 从坚果云 WebDAV "账单备份" 文件夹下载最新账单（由独立备份脚本定期上传）
+  2. 若 WebDAV 无备份，报告任务中止（不再回退到网页下载）
+
 依赖环境变量：
-- YIMU_AUTH_STATE     : 通过 GitHub Secret 传入的 auth_state.json 内容
-- QQ_EMAIL            : 发件 QQ 邮箱地址
-- QQ_AUTH_CODE        : QQ 邮箱 SMTP 授权码
-- DEEPSEEK_API_KEY    : DeepSeek API Key
-- TO_EMAIL            : (可选) 收件邮箱，默认为 QQ_EMAIL
-- REPORT_MODE         : (可选) daily / weekly / monthly，默认 weekly
+- QQ_EMAIL               : 发件 QQ 邮箱地址
+- QQ_AUTH_CODE           : QQ 邮箱 SMTP 授权码
+- DEEPSEEK_API_KEY       : DeepSeek API Key
+- TO_EMAIL               : (可选) 收件邮箱，默认为 QQ_EMAIL
+- REPORT_MODE            : (可选) daily / weekly / monthly，默认 weekly
+- WEBDAV_BASE_URL        : (可选) 坚果云 WebDAV 地址，默认 https://dav.jianguoyun.com/dav/
+- WEBDAV_USERNAME        : (可选) 坚果云账号
+- WEBDAV_PASSWORD        : (可选) 坚果云应用密码
+- WEBDAV_BACKUP_FOLDER   : (可选) 备份文件夹名
 """
 
 import os
-import io
-import json
 import smtplib
-import asyncio
-import pandas as pd
-from datetime import datetime, timedelta,timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from openai import OpenAI
-from playwright.async_api import async_playwright
 from prompts import get_prompt
 from data_processor import parse_transactions, summarize, generate_comparison_summary
-from download import download_excel
+from webdav import ensure_backup_folder, download_latest_backup
 
 
 # ======================== 配置与常量 ========================
-REQUIRED_ENV_VARS = ["YIMU_AUTH_STATE", "QQ_EMAIL", "QQ_AUTH_CODE", "DEEPSEEK_API_KEY"]
+REQUIRED_ENV_VARS = ["QQ_EMAIL", "QQ_AUTH_CODE", "DEEPSEEK_API_KEY"]
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
-YIMU_URL = "https://www.yimubill.com/"
 
 
 def _get_config() -> dict:
@@ -39,7 +41,6 @@ def _get_config() -> dict:
     if missing:
         raise RuntimeError(f"缺少必需环境变量: {', '.join(missing)}")
     return {
-        "auth_state": json.loads(os.environ["YIMU_AUTH_STATE"]),
         "qq_email": os.environ["QQ_EMAIL"],
         "qq_auth_code": os.environ["QQ_AUTH_CODE"],
         "to_email": os.environ.get("TO_EMAIL", os.environ["QQ_EMAIL"]),
@@ -48,16 +49,16 @@ def _get_config() -> dict:
     }
 
 
-# ======================== 第一步：下载 Excel ========================
-# 见download.py中的 download_excel() 函数
+# ======================== 第一步：从坚果云 WebDAV 下载备份 ========================
+# 见 webdav.py 中的 download_latest_backup() 函数
 
 
 # ======================== 第二步：解析 Excel 并筛选 ========================
-# 见data_processor.py中的 parse_transactions() 函数
+# 见 data_processor.py 中的 parse_transactions() 函数
 
 
 # ======================== 第三步：生成数据摘要 ========================
-# 见data_processor.py中的 summarize() 函数
+# 见 data_processor.py 中的 summarize() 函数
 
 
 # ======================== 第四步：AI 生成专业报告 ========================
@@ -110,13 +111,23 @@ def send_email(subject: str, body: str, from_addr: str, to_addr: str, auth_code:
 
 
 # ======================== 主流程 ========================
-async def main():
+def main():
     print("=== 一木财务报告自动化（GitHub Action 版）===")
     config = _get_config()
     print(f"报告模式: {config['report_mode']}")
 
     try:
-        excel_bytes = await download_excel(config["auth_state"])
+        # ========== 从坚果云 WebDAV 下载最新账单备份 ==========
+        print("--- 获取账单数据 ---")
+        if not ensure_backup_folder():
+            raise RuntimeError("坚果云 WebDAV 不可用，无法获取账单备份")
+
+        excel_bytes, downloaded_filename = download_latest_backup()
+        if excel_bytes is None:
+            raise RuntimeError("坚果云无可用账单备份，请确认独立备份脚本是否正常运行")
+
+        print(f"📥 使用坚果云备份文件: {downloaded_filename}")
+
         mode = config["report_mode"]
         df, period_label = parse_transactions(excel_bytes, mode)
         if df.empty:
@@ -125,7 +136,7 @@ async def main():
 
         summary = summarize(df, period_label)
 
-        # ========== 新增：尝试提取上一周期数据 ==========
+        # ========== 尝试提取上一周期数据 ==========
         comparison_summary = None
         previous_label = None
         try:
@@ -133,7 +144,6 @@ async def main():
             df_prev, prev_label = parse_transactions(excel_bytes, previous_mode)
             if not df_prev.empty:
                 previous_label = prev_label
-                from data_processor import generate_comparison_summary
                 comparison_summary = generate_comparison_summary(df, df_prev, period_label, previous_label)
         except Exception as e:
             print(f"无法生成上周期对比数据（可能无历史记录）: {e}")
@@ -160,7 +170,6 @@ async def main():
         )
     except Exception as e:
         print(f"❌ 主流程出错: {e}")
-        # 尝试发送错误通知邮件
         try:
             send_email(
                 subject="⚠️ 财务报告生成失败",
@@ -175,4 +184,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
