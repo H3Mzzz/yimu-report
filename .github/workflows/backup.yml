@@ -1,0 +1,34 @@
+name: 一木记账 → 坚果云 账单备份
+
+on:
+  workflow_dispatch:  # 仅手动触发
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          pip install requests openpyxl playwright
+
+      - name: 安装 Chromium
+        run: |
+          playwright install chromium --with-deps
+
+      - name: 运行备份
+        env:
+          YIMU_AUTH_STATE: ${{ secrets.YIMU_AUTH_STATE }}
+          WEBDAV_BASE_URL: ${{ secrets.WEBDAV_BASE_URL }}
+          WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+          WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+          WEBDAV_BACKUP_FOLDER: ${{ secrets.WEBDAV_BACKUP_FOLDER }}
+        run: python backup.py
