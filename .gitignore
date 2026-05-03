@@ -1,2 +1,5 @@
 auth_state.json
 main_test.py
+/账单备份/
+__pycache__/
+*.pyc
