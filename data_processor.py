@@ -79,22 +79,27 @@ def parse_transactions(excel_bytes: bytes, mode: str, reference_date: datetime =
     df = df.rename(columns=rename_map)
 
     # 金额标准化（使用重命名后的列名）
-    df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0).abs()
+    # 注意：不使用 abs()，保留原始符号——
+    # 负数支出表示报销/AA 回血，不应被取绝对值后错误累加
+    df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
     for col in ["退款", "优惠", "报销"]:
         if col not in df.columns:
             df[col] = 0.0
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).abs()
 
-    # 计算实际净支出（扣除退款/优惠/报销，最低为 0，防止出现负值）
+    # 计算实际净支出
     is_expense = df["类型"].str.contains("支出", na=False)
     df["实际金额"] = df["原始金额"]
-    df.loc[is_expense, "实际金额"] = (
-        df.loc[is_expense, "原始金额"]
-        - df.loc[is_expense, "退款"]
-        - df.loc[is_expense, "优惠"]
-        - df.loc[is_expense, "报销"]
+    # 正数支出：扣除退款/优惠/报销，最低为 0
+    positive_expense = is_expense & (df["原始金额"] > 0)
+    df.loc[positive_expense, "实际金额"] = (
+        df.loc[positive_expense, "原始金额"]
+        - df.loc[positive_expense, "退款"]
+        - df.loc[positive_expense, "优惠"]
+        - df.loc[positive_expense, "报销"]
     ).clip(lower=0)
+    # 负数支出（报销回血/AA 收款）：保留原值，用于冲抵同类支出
 
     # 最终分类：优先使用二级分类（若非空），否则使用一级分类
     sub_renamed = rename_map.get(sub_cat_col) if sub_cat_col else None
@@ -169,11 +174,12 @@ def summarize(df: pd.DataFrame, period_label: str) -> str:
             for addr, amt in addr_group.items():
                 lines.append(f"- {addr}：¥{amt:,.2f}")
 
-    # 单笔大额支出 Top 10
+    # 单笔大额支出 Top 10（仅统计正数支出，排除报销回血等负数条目）
     lines += ["", "🚨 单笔大额支出 Top 10"]
     has_note = "备注" in df.columns
     has_tag = "标签" in df.columns
-    for _, row in expense_df.nlargest(10, "实际金额").iterrows():
+    top_expenses = expense_df[expense_df["实际金额"] > 0].nlargest(10, "实际金额")
+    for _, row in top_expenses.iterrows():
         extras = []
         if has_tag and pd.notna(row.get("标签")) and str(row.get("标签")).strip():
             extras.append(f"🏷️ {row['标签']}")
