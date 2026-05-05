@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 # ======================== 坚果云 WebDAV 配置 ========================
 WEBDAV_BASE_URL = os.environ.get("WEBDAV_BASE_URL", "https://dav.jianguoyun.com/dav/")
 WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "h3mzzz@outlook.com")
-WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "ag96xnui866tc74w")
+WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "")
 BACKUP_FOLDER = os.environ.get("WEBDAV_BACKUP_FOLDER", "账单备份")
 
 
