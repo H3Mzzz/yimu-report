@@ -33,7 +33,6 @@ from memory import save_last_report, add_insight_from_report
 
 # ======================== 配置与常量 ========================
 REQUIRED_ENV_VARS = ["QQ_EMAIL", "QQ_AUTH_CODE", "DEEPSEEK_API_KEY", "AMAP_API_KEY"]
-MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
 
 
 def _get_config() -> dict:
