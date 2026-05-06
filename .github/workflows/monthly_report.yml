@@ -10,10 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REPORT_MODE: monthly
-      YIMU_AUTH_STATE: ${{ secrets.YIMU_AUTH_STATE }}
       QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
       QQ_AUTH_CODE: ${{ secrets.QQ_AUTH_CODE }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      AMAP_API_KEY: ${{ secrets.AMAP_API_KEY }}
+      WEBDAV_BASE_URL: ${{ secrets.WEBDAV_BASE_URL }}
+      WEBDAV_USERNAME: ${{ secrets.WEBDAV_USERNAME }}
+      WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
+      WEBDAV_BACKUP_FOLDER: ${{ secrets.WEBDAV_BACKUP_FOLDER }}
 
     steps:
       - uses: actions/checkout@v4
