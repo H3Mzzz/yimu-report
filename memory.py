@@ -16,11 +16,10 @@ from pathlib import Path
 MEMORY_DIR = Path(os.environ.get("MEMORY_DIR", "/root/cow/memory/bill"))
 
 # ── 记忆文件结构 ──────────────────────────────────────────
-# memory/
-#   insights.json       # 长期累积的关键洞察（滚动，最多保留 20 条）
-#   last_report.json    # 最近一次报告的指标快照（用于下次对比）
-#   profile.json        # 用户财务画像（缓慢变化的长期特征）
-#   advice_log.json     # 历史建议执行追踪
+# memory/bill/
+#   insights_{mode}.json  # 滚动累积的关键洞察（各模式独立）
+#   last_report.json      # 最近一次报告的指标快照
+#   profile.json          # 用户财务画像（缓慢变化的长期特征）
 
 def _now():
     return datetime.now(timezone(timedelta(hours=8)))
@@ -163,38 +162,12 @@ def save_last_report(mode: str, summary_text: str, metrics: dict, report_text: s
     )
 
 # ═══════════════════════════════════════════════════════════
-# 4. 建议追踪
-# ═══════════════════════════════════════════════════════════
-
-def load_advice_log() -> list[dict]:
-    _ensure_dir()
-    path = MEMORY_DIR / "advice_log.json"
-    if path.exists():
-        return json.loads(path.read_text("utf-8"))
-    return []
-
-def log_advice(mode: str, advice_text: str):
-    """记录本次报告中 AI 给出的建议，供下次追踪"""
-    _ensure_dir()
-    path = MEMORY_DIR / "advice_log.json"
-    existing = load_advice_log()
-    # 新建议替换旧建议（同一模式）
-    existing = [a for a in existing if a.get("mode") != mode]
-    existing.append({
-        "mode": mode,
-        "date": _now().strftime("%Y-%m-%d"),
-        "advice": advice_text,
-    })
-    # 最多保留 10 条
-    path.write_text(json.dumps(existing[-10:], ensure_ascii=False, indent=2), "utf-8")
-
-# ═══════════════════════════════════════════════════════════
-# 5. 组装「记忆上下文」— 注入到 Prompt
+# 4. 组装「记忆上下文」— 注入到 Prompt
 # ═══════════════════════════════════════════════════════════
 
 def build_memory_context(mode: str) -> str:
     """构建记忆上下文，嵌入到 prompt 的用户背景部分。返回纯文本字符串。"""
-    parts = [_profile_context(), _last_report_context(mode), _advice_context(mode), _insights_context(mode)]
+    parts = [_profile_context(), _last_report_context(mode), _insights_context(mode)]
     return "\n".join(filter(None, parts))
 
 
@@ -220,14 +193,6 @@ def _last_report_context(mode: str) -> str:
         f"净支出¥{m.get('净支出', 0):.0f}，净结余¥{m.get('净结余', 0):.0f}；"
         f"支出前三：{cats_str or '无数据'}。"
     )
-
-
-def _advice_context(mode: str) -> str:
-    advice_log = load_advice_log()
-    relevant = [a for a in advice_log if a.get("mode") == mode]
-    if not relevant:
-        return ""
-    return f"\n你上次给出的建议：{relevant[-1]['advice'][:200]}"
 
 
 def _insights_context(mode: str) -> str:

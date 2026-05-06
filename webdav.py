@@ -15,16 +15,16 @@ BACKUP_FOLDER = os.environ.get("WEBDAV_BACKUP_FOLDER", "账单备份")
 FILE_PREFIX = os.environ.get("WEBDAV_FILE_PREFIX", "bill")
 
 
-def _get_folder_url():
-    """获取备份文件夹的完整 WebDAV URL"""
-    base = WEBDAV_BASE_URL.rstrip("/") + "/"
-    return f"{base}{BACKUP_FOLDER}/"
+def _base() -> str:
+    return WEBDAV_BASE_URL.rstrip("/") + "/"
 
 
-def _get_file_url(filename: str):
-    """获取文件的完整 WebDAV URL"""
-    base = WEBDAV_BASE_URL.rstrip("/") + "/"
-    return f"{base}{BACKUP_FOLDER}/{filename}"
+def _folder_url() -> str:
+    return f"{_base()}{BACKUP_FOLDER}/"
+
+
+def _file_url(filename: str) -> str:
+    return f"{_base()}{BACKUP_FOLDER}/{filename}"
 
 
 def ensure_backup_folder():
