@@ -9,9 +9,10 @@ import xml.etree.ElementTree as ET
 
 # ======================== 坚果云 WebDAV 配置 ========================
 WEBDAV_BASE_URL = os.environ.get("WEBDAV_BASE_URL", "https://dav.jianguoyun.com/dav/")
-WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "h3mzzz@outlook.com")
+WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "")
 WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "")
 BACKUP_FOLDER = os.environ.get("WEBDAV_BACKUP_FOLDER", "账单备份")
+FILE_PREFIX = os.environ.get("WEBDAV_FILE_PREFIX", "bill")
 
 
 def _get_folder_url():
@@ -27,19 +28,18 @@ def _get_file_url(filename: str):
 
 
 def ensure_backup_folder():
-    """确保备份文件夹存在，不存在则创建"""
+    """确保备份文件夹存在（MKCOL 创建，405=已存在也视为成功）"""
     url = _get_folder_url()
     try:
-        response = requests.request(
+        resp = requests.request(
             "MKCOL", url,
             auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD),
             timeout=15
         )
-        # 201 Created 或 405 Method Not Allowed (已存在) 都表示正常
-        if response.status_code in (201, 405):
+        if resp.status_code in (201, 405):
             print(f"✅ 坚果云备份文件夹已就绪: /{BACKUP_FOLDER}/")
             return True
-        response.raise_for_status()
+        resp.raise_for_status()
     except requests.exceptions.ConnectionError as e:
         print(f"⚠️ 无法连接坚果云服务器: {e}")
         return False
@@ -151,7 +151,7 @@ def upload_backup(excel_bytes: bytes, filename: str = None):
     """
     if filename is None:
         china_tz = timezone(timedelta(hours=8))
-        filename = f"yimu_bill_{datetime.now(china_tz).strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filename = f"{FILE_PREFIX}_{datetime.now(china_tz).strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     url = _get_file_url(filename)
     try:
@@ -167,26 +167,6 @@ def upload_backup(excel_bytes: bytes, filename: str = None):
     except requests.exceptions.RequestException as e:
         print(f"❌ 上传坚果云失败: {e}")
         raise
-
-
-def download_by_filename(filename: str):
-    """
-    按指定文件名从坚果云下载账单。
-    返回 bytes 或 None
-    """
-    url = _get_file_url(filename)
-    try:
-        response = requests.get(
-            url,
-            auth=(WEBDAV_USERNAME, WEBDAV_PASSWORD),
-            timeout=60
-        )
-        response.raise_for_status()
-        print(f"✅ 从坚果云下载成功: {filename}（{len(response.content)} bytes）")
-        return response.content
-    except requests.exceptions.RequestException as e:
-        print(f"❌ 从坚果云下载失败 ({filename}): {e}")
-        return None
 
 
 def delete_backup(filename: str) -> bool:

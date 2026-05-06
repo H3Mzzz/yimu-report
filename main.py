@@ -26,12 +26,13 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from openai import OpenAI
 from prompts import get_prompt
-from data_processor import parse_transactions, summarize, generate_comparison_summary
+from data_processor import parse_transactions, summarize, generate_comparison_summary, _extract_metrics
 from webdav import ensure_backup_folder, download_latest_backup
+from memory import save_last_report, add_insight_from_report
 
 
 # ======================== 配置与常量 ========================
-REQUIRED_ENV_VARS = ["QQ_EMAIL", "QQ_AUTH_CODE", "DEEPSEEK_API_KEY"]
+REQUIRED_ENV_VARS = ["QQ_EMAIL", "QQ_AUTH_CODE", "DEEPSEEK_API_KEY", "AMAP_API_KEY"]
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
 
 
@@ -163,6 +164,16 @@ def main():
         print("\n--- AI 报告 ---\n" + report)
         china_tz = timezone(timedelta(hours=8))
         today_str = datetime.now(china_tz).strftime("%Y年%m月%d日")
+
+        # 📝 写入记忆：持久化本次报告的关键信息，让下次运行时有上下文
+        try:
+            metrics = _extract_metrics(df)
+            add_insight_from_report(mode, report, metrics)
+            save_last_report(mode, summary, metrics, report)
+            print("📝 记忆已更新")
+        except Exception as mem_err:
+            print(f"⚠️ 记忆写入失败（不影响报告）: {mem_err}")
+
         email_body = f"{summary}\n\n{'='*50}\n\n{report}"
         send_email(
             subject=f"💰 {period_label}财务报告 · {today_str}",

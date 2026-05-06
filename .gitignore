@@ -3,3 +3,5 @@ main_test.py
 /账单备份/
 __pycache__/
 *.pyc
+memory/
+.amap_cache/yimu_bill_*.xlsx

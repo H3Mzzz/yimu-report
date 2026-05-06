@@ -37,12 +37,21 @@ async def download_excel(auth_state: dict) -> bytes:
             )
         print("登录状态有效 ✓")
 
-        # 等待页面数据同步
-        await page.wait_for_timeout(60000)
+        # 等待页面数据同步（先 networkidle 再给短暂 buffer）
+        print("等待页面数据加载完成...")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=30000)
+        except Exception:
+            pass  # 长轮询或持续连接可能导致 networkidle 超时，可接受
+        await page.wait_for_timeout(5000)
 
-        # 点击设置图标（第二个 svg）
+        # 点击设置图标（优先 aria-label，回退到 svg 选择器）
         print("点击设置图标...")
-        await page.locator("svg").nth(1).click()
+        settings_btn = page.locator('[aria-label*="设置"], [aria-label*="setting"], [title*="设置"], [title*="setting"], [aria-label*="更多"], [aria-label*="more"]').first
+        if await settings_btn.count() == 0:
+            # 回退：SVG 选择器（脆弱，仅当语义化选择器找不到时使用）
+            settings_btn = page.locator("svg").nth(1)
+        await settings_btn.click()
         await page.wait_for_timeout(1000)
 
         # 点击“账单导出”
