@@ -4,4 +4,4 @@ main_test.py
 __pycache__/
 *.pyc
 memory/
-.amap_cache/yimu_bill_*.xlsx
+.amap_cache/
