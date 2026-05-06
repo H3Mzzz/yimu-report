@@ -6,6 +6,20 @@ from location_resolver import enrich_transactions, area_summary
 
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
 
+# ── 模块级常量：高德 POI 类型码映射 / 标签来源中文名 ──
+_AOI_TYPE_MAP = {
+    "141201": "🏫 高等院校", "141200": "🏫 学校",
+    "141100": "🏫 学校", "141400": "🏫 学校",
+    "060100": "🛒 购物中心", "060400": "🛒 超市",
+    "050000": "🍽️ 餐饮", "070000": "🍽️ 餐饮",
+    "080000": "🏥 医疗", "100000": "🏨 住宿",
+    "110000": "🏢 写字楼", "120000": "🏠 住宅区",
+}
+_SOURCE_CN = {
+    "aoi": "AOI", "business_area": "商圈", "street": "街巷",
+    "township": "乡镇", "keyword_match": "地址提取",
+}
+
 
 def parse_transactions(excel_bytes: bytes, mode: str, reference_date: datetime = None) -> tuple[pd.DataFrame, str]:
     """
@@ -112,6 +126,60 @@ def parse_transactions(excel_bytes: bytes, mode: str, reference_date: datetime =
     return df, period_label
 
 
+def _format_clusters(area: dict) -> list[str]:
+    """将空间聚类结果格式化为文本行列表"""
+    lines = []
+    if not area.get("clusters"):
+        return lines
+    cluster_total = sum(c["total_amount"] for c in area["clusters"])
+    lines.append("🗺️ 高频活动区域（空间聚类，半径300m，AOI标签）")
+    for c in area["clusters"][:8]:
+        label = c.get("aoi_label", "未知区域")
+        source = _SOURCE_CN.get(c.get("label_source", "?"), c.get("label_source", "?"))
+        pct = c["total_amount"] / cluster_total * 100 if cluster_total > 0 else 0
+        aoi_type = c.get("aoi_type", "")
+        type_str = _AOI_TYPE_MAP.get(aoi_type[:6], aoi_type) if aoi_type else ""
+        top_cats = ", ".join(f"{k} ¥{v:.0f}" for k, v in list(c.get("top_categories", {}).items())[:3])
+        lines.append(
+            f"- {label}（{source}）：{c['count']}笔 / ¥{c['total_amount']:,.2f}"
+            f"（占聚类总额 {pct:.0f}%）| 均值 ¥{c['avg_amount']:.2f}"
+            f"{' | ' + type_str if type_str else ''} | 主要: {top_cats}"
+        )
+    return lines
+
+
+def _format_noise(area: dict) -> list[str]:
+    """将孤立散点格式化为文本行列表"""
+    lines = []
+    noise = area.get("noise", [])
+    if not noise:
+        return lines
+    noise_sum = sum(n["total_amount"] for n in noise)
+    lines.append(f"📍 孤立散点（{len(noise)} 笔，合计 ¥{noise_sum:,.2f}，半径300m内未形成聚簇）")
+    for n in sorted(noise, key=lambda x: x["total_amount"], reverse=True):
+        p = n["points"][0]
+        addr = p.get("address", "")[:50] or n.get("aoi_label", "?")
+        cat = list(n.get("top_categories", {}).keys())[0] if n.get("top_categories") else "?"
+        lines.append(f"  - {n['aoi_label']} | {cat} | ¥{n['total_amount']:,.2f}（{addr}）")
+    return lines
+
+
+def _format_top_expenses(expense_df: pd.DataFrame, top_n: int = 10) -> list[str]:
+    """格式化单笔大额支出 Top N"""
+    lines = ["🚨 单笔大额支出 Top 10"]
+    has_note, has_tag = "备注" in expense_df.columns, "标签" in expense_df.columns
+    top = expense_df[expense_df["实际金额"] > 0].nlargest(top_n, "实际金额")
+    for _, row in top.iterrows():
+        extras = []
+        if has_tag and pd.notna(row.get("标签")) and str(row.get("标签")).strip():
+            extras.append(f"🏷️ {row['标签']}")
+        if has_note and pd.notna(row.get("备注")) and str(row.get("备注")).strip():
+            extras.append(f"📝 {row['备注']}")
+        extra_str = f"（{' | '.join(extras)}）" if extras else ""
+        lines.append(f"- {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
+    return lines
+
+
 def summarize(df: pd.DataFrame, period_label: str) -> str:
     """根据筛选后的 DataFrame 生成详细的文本摘要（供 AI 分析使用）"""
     income_df = df[df["类型"].str.contains("收入", na=False)]
@@ -170,78 +238,18 @@ def summarize(df: pd.DataFrame, period_label: str) -> str:
     if "地址" in df.columns:
         addr_expense = expense_df[expense_df["地址"].notna() & (expense_df["地址"].astype(str).str.strip() != "")]
         if not addr_expense.empty:
-            # 转为 dict 列表传给 location_resolver
             addr_records = addr_expense[["地址", "最终分类", "实际金额"]].copy()
             addr_records.columns = ["address", "category", "amount"]
             records = addr_records.to_dict("records")
-
-            # enrich：附加经纬度 + 行政区划
             enriched = enrich_transactions(records)
-
-            # 空间聚类摘要
             area = area_summary(enriched, eps_meters=300)
-
-            # 空间聚类输出（自动发现高频活动区域，AOI 四级降级标签）
-            if area.get("clusters"):
-                lines += ["", "🗺️ 高频活动区域（空间聚类，半径300m，AOI标签）"]
-                # 计算全局总额用于金额占比
-                cluster_total = sum(c["total_amount"] for c in area["clusters"])
-                # AOI 类型码映射（高德 POI 大分类编码）
-                AOI_TYPE_MAP = {
-                    "141201": "🏫 高等院校", "141200": "🏫 学校",
-                    "141100": "🏫 学校", "141400": "🏫 学校",
-                    "060100": "🛒 购物中心", "060400": "🛒 超市",
-                    "050000": "🍽️ 餐饮", "070000": "🍽️ 餐饮",
-                    "080000": "🏥 医疗", "100000": "🏨 住宿",
-                    "110000": "🏢 写字楼", "120000": "🏠 住宅区",
-                }
-                SOURCE_CN = {
-                    "aoi": "AOI", "business_area": "商圈", "street": "街巷",
-                    "township": "乡镇", "keyword_match": "地址提取",
-                }
-                for c in area["clusters"][:8]:
-                    label = c.get("aoi_label", "未知区域")
-                    source = SOURCE_CN.get(c.get("label_source", "?"), c.get("label_source", "?"))
-                    pct = c["total_amount"] / cluster_total * 100 if cluster_total > 0 else 0
-                    aoi_type = c.get("aoi_type", "")
-                    type_str = AOI_TYPE_MAP.get(aoi_type[:6], aoi_type) if aoi_type else ""
-                    lines.append(
-                        f"- {label}（{source}）：{c['count']}笔 / ¥{c['total_amount']:,.2f}"
-                        f"（占聚类总额 {pct:.0f}%）| "
-                        f"均值 ¥{c['avg_amount']:.2f}"
-                        f"{' | ' + type_str if type_str else ''} | "
-                        f"主要: {', '.join(f'{k} ¥{v:.0f}' for k, v in list(c.get('top_categories', {}).items())[:3])}"
-                    )
-
-            # 孤立点详情（半径300m内不足3笔，逐个展示）
-            if area.get("noise"):
-                noise_sum = sum(n["total_amount"] for n in area["noise"])
-                lines.append("")
-                lines.append(f"📍 孤立散点（{len(area['noise'])} 笔，合计 ¥{noise_sum:,.2f}，半径300m内未形成聚簇）")
-                # 按金额降序展示
-                for n in sorted(area["noise"], key=lambda x: x["total_amount"], reverse=True):
-                    p = n["points"][0]
-                    addr = p.get("address", "")[:50] or n.get("aoi_label", "?")
-                    cat = list(n.get("top_categories", {}).keys())[0] if n.get("top_categories") else "?"
-                    lines.append(f"  - {n['aoi_label']} | {cat} | ¥{n['total_amount']:,.2f}（{addr}）")
-
-            # 有地址但无法解析坐标的提示
+            lines += _format_clusters(area)
+            lines += _format_noise(area)
             if area["stats"]["total_without_location"] > 0:
                 lines.append(f"（{area['stats']['total_without_location']}条地址无法解析坐标，未纳入区域分析）")
 
-    # 单笔大额支出 Top 10（仅统计正数支出，排除报销回血等负数条目）
-    lines += ["", "🚨 单笔大额支出 Top 10"]
-    has_note = "备注" in df.columns
-    has_tag = "标签" in df.columns
-    top_expenses = expense_df[expense_df["实际金额"] > 0].nlargest(10, "实际金额")
-    for _, row in top_expenses.iterrows():
-        extras = []
-        if has_tag and pd.notna(row.get("标签")) and str(row.get("标签")).strip():
-            extras.append(f"🏷️ {row['标签']}")
-        if has_note and pd.notna(row.get("备注")) and str(row.get("备注")).strip():
-            extras.append(f"📝 {row['备注']}")
-        extra_str = f"（{' | '.join(extras)}）" if extras else ""
-        lines.append(f"- {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
+    # 单笔大额支出 Top 10
+    lines += _format_top_expenses(expense_df)
 
     return "\n".join(lines)
 

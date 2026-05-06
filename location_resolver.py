@@ -341,178 +341,124 @@ def _extract_aoi_label(region: dict) -> str:
     return region.get("district", "") or region.get("city", "") or "未知区域"
 
 
-def _simple_dbscan(points: list[dict], eps_meters: float = 200, min_samples: int = 3) -> list[dict]:
-    """
-    简版 DBSCAN 空间聚类。
-
-    points: [{lng, lat, amount, category, address, ...}]
-    eps_meters: 聚类半径
-    min_samples: 最小样本数
-
-    每个簇调用 1 次逆地理 API（extensions=all），
-    按 AOI → 商圈 → 街巷 → 乡镇 四级降级提取标签。
-
-    返回值字段:
-    - aoi_label: 四级降级提取的标签（需求文档核心字段）
-    - label_source: 标签来源 (aoi/business_area/street/township)
-    - township: 用于行政区划兜底展示
-    - noise_points: 孤立点列表（cluster_id=-1 的散点）
-    """
+def _simple_dbscan(points: list[dict], eps_meters: float = 200, min_samples: int = 3) -> tuple[list[dict], list[dict]]:
+    """简版 DBSCAN 空间聚类，返回 (clusters, noise)。每簇调用 1 次逆地理 API。"""
     n = len(points)
     if n == 0:
-        return []
+        return [], []
 
-    # 距离矩阵
-    dist = [[0.0] * n for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = _haversine(
-                points[i]["lng"], points[i]["lat"],
-                points[j]["lng"], points[j]["lat"],
-            )
-            dist[i][j] = d
-            dist[j][i] = d
+    # 邻域查找（O(n²)，交易量小可接受）
+    def _neighbors(i):
+        return {j for j in range(n) if _haversine(
+            points[i]["lng"], points[i]["lat"], points[j]["lng"], points[j]["lat"]) <= eps_meters}
 
-    # DBSCAN
-    UNVISITED = -1
-    NOISE = -2
+    UNVISITED, NOISE = -1, -2
     labels = [UNVISITED] * n
     cluster_id = 0
-
     for i in range(n):
         if labels[i] != UNVISITED:
             continue
-
-        neighbors = [j for j in range(n) if dist[i][j] <= eps_meters]
-        if len(neighbors) < min_samples:
+        nbrs = _neighbors(i)
+        if len(nbrs) < min_samples:
             labels[i] = NOISE
             continue
-
         labels[i] = cluster_id
-        seed_set = set(neighbors) - {i}
-
-        while seed_set:
-            q = seed_set.pop()
+        seeds = nbrs - {i}
+        while seeds:
+            q = seeds.pop()
             if labels[q] == NOISE:
                 labels[q] = cluster_id
             if labels[q] != UNVISITED:
                 continue
             labels[q] = cluster_id
-            q_neighbors = [j for j in range(n) if dist[q][j] <= eps_meters]
-            if len(q_neighbors) >= min_samples:
-                seed_set.update(q_neighbors)
-
+            q_nbrs = _neighbors(q)
+            if len(q_nbrs) >= min_samples:
+                seeds |= q_nbrs
         cluster_id += 1
 
-    # 整理结果
-    clusters = defaultdict(list)
-    noise_points = []
-    for i, label in enumerate(labels):
-        if label == NOISE:
-            noise_points.append(points[i])
-        else:
-            clusters[label].append(points[i])
+    # 分组
+    from collections import defaultdict
+    groups = defaultdict(list)
+    noise_pts = []
+    for i, lbl in enumerate(labels):
+        (noise_pts if lbl == NOISE else groups[lbl]).append(points[i])
 
-    results = []
-    noise_results = []
+    # 构建簇结果
+    def _build_cluster(pts, cid):
+        return _build_cluster_result(pts, cid, "clustered")
 
-    for cid, pts in clusters.items():
-        # 中心点：中位数过滤偏离点后求均值（抵御 GPS 漂移拉偏）
-        lngs = sorted(p["lng"] for p in pts)
-        lats = sorted(p["lat"] for p in pts)
-        med_lng, med_lat = lngs[len(lngs) // 2], lats[len(lats) // 2]
-        def _med_dist(lng, lat):
-            return _haversine(lng, lat, med_lng, med_lat)
-        # 剔除距离中位数超过 2σ 的异常点
-        dists = [_med_dist(lngs[i], lats[i]) for i in range(len(pts))]
-        mean_d = sum(dists) / len(dists)
-        std_d = (sum((d - mean_d) ** 2 for d in dists) / len(dists)) ** 0.5
-        threshold = mean_d + 2 * std_d if std_d > 0 else 999999
-        filtered = [(lngs[i], lats[i]) for i in range(len(pts)) if dists[i] <= threshold]
-        if not filtered:  # 极端情况：全被剔了，回退到原始点
-            filtered = [(lngs[i], lats[i]) for i in range(len(pts))]
-        avg_lng = sum(p[0] for p in filtered) / len(filtered)
-        avg_lat = sum(p[1] for p in filtered) / len(filtered)
+    clusters = [_build_cluster(groups[cid], cid) for cid in sorted(groups)]
+    noise_results = [_build_cluster_result([pt], -1, "noise_single") for pt in noise_pts]
 
-        # 1 次 API 调用拿逆地理详情
-        region = regeocode(avg_lng, avg_lat)
+    clusters.sort(key=lambda x: x["count"], reverse=True)
+    return clusters, noise_results
 
-        # 四级降级提取 AOI 标签
-        aoi_label = _extract_aoi_label(region)
-        label_source = "aoi"
-        aoi_type = ""  # 高德 AOI 类型码，如 "141201"=高等教育院校
-        if region.get("aois"):
-            label_source = "aoi"
-            first_aoi = region["aois"][0]
-            if isinstance(first_aoi, dict):
-                aoi_type = first_aoi.get("type", "")
-        elif region.get("business_areas"):
-            label_source = "business_area"
-        elif region.get("street_number", "").strip():
-            label_source = "street"
-        else:
-            label_source = "township"
 
-        # 兜底：逆地理降级到 township 时，从地址文本提取关键词覆盖
-        #  ① HARDCODED_LOCATIONS 已知地点匹配
-        #  ② 地址公共子串提取（品牌(分店) → 分店名）
-        if label_source == "township":
-            addrs = [p.get("address", "") for p in pts]
-            alt_label = _match_known_location(addrs) or _extract_address_keyword(addrs)
-            if alt_label:
-                aoi_label = alt_label
-                label_source = "keyword_match"
+def _build_cluster_result(pts: list[dict], cid: int, label_source: str) -> dict:
+    """构建单个簇/孤立点的结构化结果"""
+    # 中心点：中位数滤波→均值
+    lngs = sorted(p["lng"] for p in pts)
+    lats = sorted(p["lat"] for p in pts)
+    med_lng, med_lat = lngs[len(lngs) // 2], lats[len(lats) // 2]
+    dists = [_haversine(lngs[i], lats[i], med_lng, med_lat) for i in range(len(pts))]
+    mean_d = sum(dists) / len(dists)
+    std_d = (sum((d - mean_d) ** 2 for d in dists) / len(dists)) ** 0.5 if len(dists) > 1 else 0
+    threshold = mean_d + 2 * std_d if std_d > 0 else 999999
+    filtered = [(lngs[i], lats[i]) for i in range(len(pts)) if dists[i] <= threshold] or \
+               [(lngs[i], lats[i]) for i in range(len(pts))]
+    avg_lng = sum(p[0] for p in filtered) / len(filtered)
+    avg_lat = sum(p[1] for p in filtered) / len(filtered)
 
-        # 统计
-        total_amount = sum(abs(p.get("amount", 0)) for p in pts)
-        categories = defaultdict(float)
-        for p in pts:
-            categories[p.get("category", "未知")] += abs(p.get("amount", 0))
+    region = regeocode(avg_lng, avg_lat) if cid >= 0 else (
+        {"formatted_address": pts[0].get("formatted_address", ""),
+         "aois": pts[0].get("aois", []), "township": pts[0].get("township", "")}
+        if pts[0].get("formatted_address") else regeocode(pts[0]["lng"], pts[0]["lat"])
+    ) if cid < 0 else regeocode(avg_lng, avg_lat)
 
-        results.append({
-            "cluster_id": cid,
-            "center_lng": round(avg_lng, 6),
-            "center_lat": round(avg_lat, 6),
-            "count": len(pts),
-            "points": pts,
-            "aoi_label": aoi_label,
-            "label_source": label_source,
-            "aoi_type": aoi_type,
-            "township": region.get("township", ""),
-            "district": region.get("district", ""),
-            "city": region.get("city", ""),
-            "total_amount": round(total_amount, 2),
-            "avg_amount": round(total_amount / len(pts), 2),
-            "top_categories": dict(sorted(categories.items(), key=lambda x: x[1], reverse=True)[:5]),
-        })
+    aoi_label, actual_source = _resolve_aoi_label_and_source(region, pts, label_source)
+    # 兼容新旧缓存格式：aois 可能是 [dict] 或 [str]
+    first_aoi = region.get("aois", [None])[0] if region.get("aois") else None
+    aoi_type = first_aoi.get("type", "") if isinstance(first_aoi, dict) else ""
 
-    # 孤立点：有 formatted_address / aois 则直接复用，不调 API
-    for pt in noise_points:
-        if pt.get("formatted_address"):
-            # 复用 enrich 阶段已有的逆地理信息，跳过 API
-            region = {
-                "formatted_address": pt.get("formatted_address", ""),
-                "aois": pt.get("aois", []),
-                "township": pt.get("township", ""),
-            }
-        else:
-            region = regeocode(pt["lng"], pt["lat"])
-        noise_results.append({
-            "cluster_id": -1,
-            "center_lng": pt["lng"],
-            "center_lat": pt["lat"],
-            "count": 1,
-            "points": [pt],
-            "aoi_label": _extract_aoi_label(region),
-            "label_source": "noise_single",
-            "township": region.get("township", ""),
-            "total_amount": abs(pt.get("amount", 0)),
-            "avg_amount": abs(pt.get("amount", 0)),
-            "top_categories": {pt.get("category", "未知"): abs(pt.get("amount", 0))},
-        })
+    total_amount = sum(abs(p.get("amount", 0)) for p in pts)
+    from collections import defaultdict
+    categories = defaultdict(float)
+    for p in pts:
+        categories[p.get("category", "未知")] += abs(p.get("amount", 0))
 
-    results.sort(key=lambda x: x["count"], reverse=True)
-    return results, noise_results
+    return {
+        "cluster_id": cid,
+        "center_lng": round(avg_lng, 6), "center_lat": round(avg_lat, 6),
+        "count": len(pts), "points": pts,
+        "aoi_label": aoi_label, "label_source": actual_source, "aoi_type": aoi_type,
+        "township": region.get("township", ""), "district": region.get("district", ""),
+        "city": region.get("city", ""),
+        "total_amount": round(total_amount, 2),
+        "avg_amount": round(total_amount / len(pts), 2),
+        "top_categories": dict(sorted(categories.items(), key=lambda x: x[1], reverse=True)[:5]),
+    }
+
+
+def _resolve_aoi_label_and_source(region: dict, pts: list[dict], fallback_source: str) -> tuple[str, str]:
+    """四级降级提取 AOI 标签 + 来源标识"""
+    aoi_label = _extract_aoi_label(region)
+
+    if region.get("aois"):
+        source = "aoi"
+    elif region.get("business_areas"):
+        source = "business_area"
+    elif region.get("street_number", "").strip():
+        source = "street"
+    else:
+        source = "township"
+
+    # 降级到 township 时尝试关键词提取兜底
+    if source == "township":
+        addrs = [p.get("address", "") for p in pts]
+        alt = _match_known_location(addrs) or _extract_address_keyword(addrs)
+        if alt:
+            aoi_label, source = alt, "keyword_match"
+    return aoi_label, source
 
 
 # ═══════════════════════════════════════════════════════════

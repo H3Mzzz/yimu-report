@@ -193,48 +193,48 @@ def log_advice(mode: str, advice_text: str):
 # ═══════════════════════════════════════════════════════════
 
 def build_memory_context(mode: str) -> str:
-    """
-    构建记忆上下文，嵌入到 prompt 的用户背景部分。
-    返回纯文本字符串，可直接拼接到 prompt 中。
-    """
-    parts = []
+    """构建记忆上下文，嵌入到 prompt 的用户背景部分。返回纯文本字符串。"""
+    parts = [_profile_context(), _last_report_context(mode), _advice_context(mode), _insights_context(mode)]
+    return "\n".join(filter(None, parts))
 
-    # ── 用户画像 ──
+
+def _profile_context() -> str:
     profile = load_profile()
-    parts.append(f"用户画像：{profile['identity']}，月生活费基准约 {profile['monthly_budget']} 元。")
-
+    lines = [f"用户画像：{profile['identity']}，月生活费基准约 {profile['monthly_budget']} 元。"]
     if profile.get("known_behavior"):
-        parts.append(f"已知消费特征：{'；'.join(profile['known_behavior'])}")
-
+        lines.append(f"已知消费特征：{'；'.join(profile['known_behavior'])}")
     if profile.get("context_notes"):
-        parts.append(f"背景说明：{'；'.join(profile['context_notes'])}")
+        lines.append(f"背景说明：{'；'.join(profile['context_notes'])}")
+    return "\n".join(lines)
 
-    # ── 上次报告回顾 ──
+
+def _last_report_context(mode: str) -> str:
     last = load_last_report()
-    if last and last.get("mode") == mode:
-        m = last.get("metrics", {})
-        top = last.get("top_expense_categories", {})
-        cats_str = "、".join(f"{c}¥{v:.0f}" for c, v in list(top.items())[:3])
-        parts.append(
-            f"\n上次{mode}报告回顾（{last['date']}）："
-            f"净支出¥{m.get('净支出', 0):.0f}，净结余¥{m.get('净结余', 0):.0f}；"
-            f"支出前三：{cats_str or '无数据'}。"
-        )
+    if not last or last.get("mode") != mode:
+        return ""
+    m = last.get("metrics", {})
+    top = last.get("top_expense_categories", {})
+    cats_str = "、".join(f"{c}¥{v:.0f}" for c, v in list(top.items())[:3])
+    return (
+        f"\n上次{mode}报告回顾（{last['date']}）："
+        f"净支出¥{m.get('净支出', 0):.0f}，净结余¥{m.get('净结余', 0):.0f}；"
+        f"支出前三：{cats_str or '无数据'}。"
+    )
 
-    # ── 历史建议追踪 ──
+
+def _advice_context(mode: str) -> str:
     advice_log = load_advice_log()
-    if advice_log:
-        # 只取同模式建议
-        relevant_advice = [a for a in advice_log if a.get("mode") == mode]
-        if relevant_advice:
-            latest = relevant_advice[-1]
-            parts.append(f"\n你上次给出的建议：{latest['advice'][:200]}")
+    relevant = [a for a in advice_log if a.get("mode") == mode]
+    if not relevant:
+        return ""
+    return f"\n你上次给出的建议：{relevant[-1]['advice'][:200]}"
 
-    # ── 关键洞察 ──
+
+def _insights_context(mode: str) -> str:
     insights = load_insights(mode=mode, max_count=5)
-    if insights:
-        parts.append("\n近期关键洞察（按时间倒序）：")
-        for i, ins in enumerate(reversed(insights)):
-            parts.append(f"{i+1}. [{ins['date']}] {ins['mode']}报告 — {ins['summary'][:150]}")
-
-    return "\n".join(parts)
+    if not insights:
+        return ""
+    lines = ["\n近期关键洞察（按时间倒序）："]
+    for i, ins in enumerate(reversed(insights)):
+        lines.append(f"{i+1}. [{ins['date']}] {ins['mode']}报告 — {ins['summary'][:150]}")
+    return "\n".join(lines)
