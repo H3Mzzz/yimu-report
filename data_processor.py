@@ -113,18 +113,10 @@ def _format_clusters(clusters: list[dict]) -> list[str]:
     lines.append("🗺️ 高频活动区域（按 AOI 标签分组）")
     for c in clusters[:8]:
         pct = c["total_amount"] / cluster_total * 100 if cluster_total > 0 else 0
-<<<<<<< HEAD
         top_cats = ", ".join(f"{k} ¥{v:.0f}" for k, v in list(c["top_categories"].items())[:3])
         lines.append(
             f"- {c['aoi_label']}：{c['count']}笔 / ¥{c['total_amount']:,.2f}"
             f"（占区域总额 {pct:.0f}%）| 均值 ¥{c['avg_amount']:.2f} | {top_cats}"
-=======
-        top_cats = ", ".join(f"{k} ¥{v:.0f}" for k, v in list(c.get("top_categories", {}).items())[:3])
-        lines.append(
-            f"- {label}（{source}）：{c['count']}笔 / ¥{c['total_amount']:,.2f}"
-            f"（占聚类总额 {pct:.0f}%）| 均值 ¥{c['avg_amount']:.2f}"
-            f" | 主要: {top_cats}"
->>>>>>> 9bf0a30 (html渲染)
         )
     return lines
 
