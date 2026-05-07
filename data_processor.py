@@ -110,13 +110,15 @@ def _format_clusters(clusters: list[dict]) -> list[str]:
     if not clusters:
         return lines
     cluster_total = sum(c["total_amount"] for c in clusters)
-    lines.append("🗺️ 高频活动区域（按 AOI 标签分组）")
+    lines.append("## 🗺️ 高频活动区域")
+    lines.append("")
+    lines.append("| 区域 | 笔数 | 金额 | 占比 | 均值 | 主要消费 |")
+    lines.append("|------|------|------|------|------|----------|")
     for c in clusters[:8]:
         pct = c["total_amount"] / cluster_total * 100 if cluster_total > 0 else 0
         top_cats = ", ".join(f"{k} ¥{v:.0f}" for k, v in list(c["top_categories"].items())[:3])
         lines.append(
-            f"- {c['aoi_label']}：{c['count']}笔 / ¥{c['total_amount']:,.2f}"
-            f"（占区域总额 {pct:.0f}%）| 均值 ¥{c['avg_amount']:.2f} | {top_cats}"
+            f"| {c['aoi_label']} | {c['count']} | ¥{c['total_amount']:,.2f} | {pct:.0f}% | ¥{c['avg_amount']:.2f} | {top_cats} |"
         )
     return lines
 
@@ -142,7 +144,7 @@ def summarize(df: pd.DataFrame, period_label: str) -> str:
         f"经优惠(¥{total_disc:,.2f})、退款(¥{total_refund:,.2f})、报销抵扣(¥{total_reimb:,.2f})后，"
         f"个人真实净支出为 ¥{real_expense:,.2f}。",
         "",
-        "1. 核心指标（真实现金流）",
+        "## 核心指标",
         f"- 💰总收入：¥{total_income:,.2f}",
         f"- 💸 真实净支出：¥{real_expense:,.2f}",
         f"- 🏦净结余：¥{net_balance:,.2f}",
@@ -154,13 +156,13 @@ def summarize(df: pd.DataFrame, period_label: str) -> str:
 
     # 收入来源明细
     if total_income > 0:
-        lines += ["", "2. 收入来源明细"]
+        lines += ["", "## 收入来源明细"]
         income_by_cat = income_df.groupby("最终分类")["原始金额"].sum().sort_values(ascending=False)
         for cat, amt in income_by_cat.items():
             lines.append(f"- {cat}：¥{amt:,.2f}（{amt/total_income*100:.1f}%）")
 
     # 支出分类全景
-    lines += ["", "3. 支出分类全景（按实际净支出）"]
+    lines += ["", "## 支出分类全景"]
     expense_by_cat = {k: v for k, v in metrics["支出分类"].items() if v > 0}
     for cat, amt in sorted(expense_by_cat.items(), key=lambda x: x[1], reverse=True):
         pct = amt / real_expense * 100 if real_expense else 0
@@ -217,6 +219,7 @@ def _extract_metrics(df: pd.DataFrame) -> dict:
     net_balance = total_income - real_expense
 
     expense_by_cat = expense_df.groupby("最终分类")["实际金额"].sum().to_dict()
+    income_by_cat = income_df.groupby("最终分类")["原始金额"].sum().to_dict()
 
     small_expenses = expense_df[expense_df["实际金额"] <= 30]
     freq_small = {}
@@ -234,6 +237,7 @@ def _extract_metrics(df: pd.DataFrame) -> dict:
         "净支出": real_expense,
         "净结余": net_balance,
         "支出分类": expense_by_cat,
+        "收入分类": income_by_cat,
         "小额高频": freq_small,
     }
 
