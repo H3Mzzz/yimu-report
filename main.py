@@ -29,6 +29,7 @@ from prompts import get_prompt
 from data_processor import parse_transactions, summarize, generate_comparison_summary, _extract_metrics
 from webdav import ensure_backup_folder, download_latest_backup
 from memory import save_last_report, add_insight_from_report
+from html_renderer import build_html_email
 
 
 # ======================== 配置与常量 ========================
@@ -100,13 +101,15 @@ def generate_report(summary: str, period_label: str, api_key: str, mode: str,
         return f"（⚠️ AI 报告生成失败：{e}）"
 
 # ======================== 第五步：发送邮件 ========================
-def send_email(subject: str, body: str, from_addr: str, to_addr: str, auth_code: str):
-    """通过 QQ 邮箱 SMTP 发送纯文本邮件"""
-    msg = MIMEMultipart()
+def send_email(subject: str, html_body: str, plain_body: str,
+               from_addr: str, to_addr: str, auth_code: str):
+    """通过 QQ 邮箱 SMTP 发送邮件（HTML + 纯文本 fallback）"""
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = to_addr
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    msg.attach(MIMEText(plain_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
     with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
         server.login(from_addr, auth_code)
         server.sendmail(from_addr, to_addr, msg.as_string())
@@ -174,9 +177,11 @@ def main():
             print(f"⚠️ 记忆写入失败（不影响报告）: {mem_err}")
 
         email_body = f"{summary}\n\n{'='*50}\n\n{report}"
+        html_body = build_html_email(summary, report, period_label, today_str)
         send_email(
             subject=f"💰 {period_label}财务报告 · {today_str}",
-            body=email_body,
+            html_body=html_body,
+            plain_body=email_body,
             from_addr=config["qq_email"],
             to_addr=config["to_email"],
             auth_code=config["qq_auth_code"],
@@ -186,7 +191,8 @@ def main():
         try:
             send_email(
                 subject="⚠️ 财务报告生成失败",
-                body=f"自动财务报告运行出错：\n\n{e}",
+                html_body=f"<p>自动财务报告运行出错：</p><pre>{e}</pre>",
+                plain_body=f"自动财务报告运行出错：\n\n{e}",
                 from_addr=config["qq_email"],
                 to_addr=config["to_email"],
                 auth_code=config["qq_auth_code"],
