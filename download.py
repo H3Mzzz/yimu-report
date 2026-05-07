@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""一木账单 Excel 导出模块，使用 Playwright 模拟浏览器下载"""
+"""一木账单网页下载模块，Playwright 无头浏览器模拟登录 → 导出 Excel。"""
 
 import os
 import json
@@ -11,56 +10,37 @@ YIMU_URL = "https://www.yimubill.com/"
 
 
 async def download_excel(auth_state: dict) -> bytes:
-    """
-    使用已保存的登录状态（无头浏览器）导出账单 Excel。
-    参数：
-        auth_state: Playwright storage_state 格式的字典
-    返回：
-        下载文件的二进制内容
-    """
+    """使用已保存的登录状态导出账单 Excel，返回文件二进制内容。"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             storage_state=auth_state,
             accept_downloads=True,
-            viewport={"width": 1280, "height": 720}
+            viewport={"width": 1280, "height": 720},
         )
-        print("登录状态已注入，进入主页...")
         page = await context.new_page()
         await page.goto(YIMU_URL, timeout=60000)
-        await page.wait_for_load_state("domcontentloaded")   
+        await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(10000)
-        # 验证登录状态
-        if await page.query_selector("text=登 录") is not None:
-            raise RuntimeError(
-                "登录状态已过期！请重新获取 auth_state.json 并更新 GitHub Secret: YIMU_AUTH_STATE"
-            )
-        print("登录状态有效 ✓")
 
-        # 等待页面数据同步（先 networkidle 再给短暂 buffer）
-        print("等待页面数据加载完成...")
+        if await page.query_selector("text=登 录") is not None:
+            raise RuntimeError("登录状态已过期，请重新获取 auth_state.json")
+
         try:
             await page.wait_for_load_state("networkidle", timeout=30000)
         except Exception:
-            pass  # 长轮询或持续连接可能导致 networkidle 超时，可接受
+            pass
         await page.wait_for_timeout(5000)
 
-        # 点击设置图标（优先 aria-label，回退到 svg 选择器）
-        print("点击设置图标...")
-        settings_btn = page.locator('[aria-label*="设置"], [aria-label*="setting"], [title*="设置"], [title*="setting"], [aria-label*="更多"], [aria-label*="more"]').first
+        settings_btn = page.locator('[aria-label*="设置"], [aria-label*="setting"], [title*="设置"], [aria-label*="更多"]').first
         if await settings_btn.count() == 0:
-            # 回退：SVG 选择器（脆弱，仅当语义化选择器找不到时使用）
             settings_btn = page.locator("svg").nth(1)
         await settings_btn.click()
         await page.wait_for_timeout(1000)
 
-        # 点击“账单导出”
-        print("点击菜单中的账单导出...")
         await page.get_by_text("账单导出").click()
         await page.wait_for_timeout(1000)
 
-        # 拦截下载并确认导出 Excel
-        print("确认导出，等待文件下载...")
         async with page.expect_download(timeout=60000) as dl_info:
             await page.get_by_text("导出 Excel").click()
 
@@ -70,25 +50,22 @@ async def download_excel(auth_state: dict) -> bytes:
             content = f.read()
 
         await browser.close()
-        print(f"下载成功，大小：{len(content)} bytes")
+        print(f"下载成功，{len(content)} bytes")
         return content
 
 
-# 如果直接运行本模块，可从环境变量加载 auth_state 并执行下载（用于本地测试）
 if __name__ == "__main__":
     auth_state_json = os.environ.get("YIMU_AUTH_STATE")
     if not auth_state_json:
-        # 也可尝试从本地文件读取
         try:
             with open("auth_state.json", "r") as f:
                 auth_state = json.load(f)
         except FileNotFoundError:
-            raise RuntimeError("请设置环境变量 YIMU_AUTH_STATE 或提供 auth_state.json 文件")
+            raise RuntimeError("请设置 YIMU_AUTH_STATE 或提供 auth_state.json")
     else:
         auth_state = json.loads(auth_state_json)
 
     excel_bytes = asyncio.run(download_excel(auth_state))
-    # 保存到本地文件，方便检查
     with open("exported.xlsx", "wb") as f:
         f.write(excel_bytes)
-    print("文件已保存为 exported.xlsx")
+    print("已保存 exported.xlsx")

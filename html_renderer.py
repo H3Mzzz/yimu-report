@@ -1,13 +1,8 @@
-# html_renderer.py — 将纯文本报告转换为 HTML 邮件
-# 负责：文本解析 → HTML 结构化 → 内联 CSS 样式（兼容各邮件客户端）
-
 import re
 import io
 import base64
 
-# ═══════════════════════════════════════════════════════════
 # CSS 样式（全部内联，确保邮件客户端兼容性）
-# ═══════════════════════════════════════════════════════════
 
 _CSS_RESET = "margin:0;padding:0;"
 _CSS_BODY = (
@@ -71,29 +66,29 @@ _CSS_FOOTER = (
 _CSS_DIVIDER = "border:none;border-top:1px solid #e2e8f0;margin:20px 0;"
 
 
-# ═══════════════════════════════════════════════════════════
 # 饼图生成（matplotlib → base64 PNG）
-# ═══════════════════════════════════════════════════════════
 
 def _generate_pie_chart_html(data: dict, title: str) -> str:
-    """将分类数据渲染为饼图，返回含 base64 图片的 HTML 片段"""
+    """将分类数据渲染为带引线标注的饼图，返回含 base64 图片的 HTML 片段"""
     if not data:
         return ""
 
     try:
+        import numpy as np
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         plt.rcParams["font.sans-serif"] = [
-            "Microsoft YaHei", "SimHei", "PingFang SC",
-            "WenQuanYi Micro Hei", "Noto Sans CJK SC", "DejaVu Sans",
+            "WenQuanYi Zen Hei", "SimHei", "Microsoft YaHei",
+            "PingFang SC", "Noto Sans CJK SC", "DejaVu Sans",
         ]
         plt.rcParams["axes.unicode_minus"] = False
 
         sorted_data = sorted(data.items(), key=lambda x: x[1], reverse=True)
         labels = [d[0] for d in sorted_data]
         values = [d[1] for d in sorted_data]
+        total = sum(values)
 
         if not any(v > 0 for v in values):
             return ""
@@ -104,35 +99,76 @@ def _generate_pie_chart_html(data: dict, title: str) -> str:
             "#a18cd1", "#fbc2eb", "#8fd3f4", "#84fab0", "#cfd9df",
         ]
 
-        fig, ax = plt.subplots(figsize=(5.5, 3.5), dpi=150)
+        fig, ax = plt.subplots(figsize=(6.5, 4.5), dpi=150)
         fig.patch.set_facecolor("white")
 
-        wedges, texts, autotexts = ax.pie(
+        wedges, _, _ = ax.pie(
             values, labels=None, autopct="",
             colors=colors[: len(values)], startangle=90,
-            wedgeprops={"linewidth": 1, "edgecolor": "white"},
+            wedgeprops={"linewidth": 1.5, "edgecolor": "white"},
+            pctdistance=0.85,
         )
 
-        # 图例放在右侧
-        legend_labels = [f"{l}  ¥{v:,.0f}" for l, v in zip(labels, values)]
-        legend = ax.legend(
-            wedges, legend_labels, loc="center left",
-            bbox_to_anchor=(1.02, 0.5), fontsize=8, frameon=False,
+        # 引线标注：按象限分左右两组，同侧标签均匀排布避免重叠
+        bbox_props = dict(
+            boxstyle="round,pad=0.3", fc="white", ec="#cccccc", lw=0.8, alpha=0.95
         )
 
-        # 百分比标签叠在扇区上（仅占比 > 5% 的显示）
-        total = sum(values)
-        for i, (w, v) in enumerate(zip(wedges, values)):
-            pct = v / total * 100
-            if pct >= 5:
-                ang = (w.theta2 + w.theta1) / 2.0
-                x = 0.65 * __import__("math").cos(__import__("math").radians(ang))
-                y = 0.65 * __import__("math").sin(__import__("math").radians(ang))
-                ax.text(x, y, f"{pct:.0f}%", ha="center", va="center",
-                        fontsize=8, color="white", fontweight="bold")
+        # 先收集左右两侧的项
+        left_items, right_items = [], []
+        for wedge, label, val in zip(wedges, labels, values):
+            ang_mid = np.deg2rad((wedge.theta2 + wedge.theta1) / 2.0)
+            cx, cy = np.cos(ang_mid), np.sin(ang_mid)
+            pct = val / total * 100
+            item = (wedge, label, val, pct, ang_mid, cx, cy)
+            if cx >= 0:
+                right_items.append(item)
+            else:
+                left_items.append(item)
 
-        ax.set_title(title, fontsize=12, fontweight="bold", pad=12)
-        plt.tight_layout()
+        # 同侧均匀分布 Y 坐标
+        def _layout_side(items, x_text, y_range=(-1.25, 1.25)):
+            n = len(items)
+            if n == 0:
+                return
+            if n == 1:
+                y_positions = [0.0]
+            else:
+                y_positions = list(np.linspace(y_range[0], y_range[1], n))
+            for (wedge, label, val, pct, ang_mid, cx, cy), y_t in zip(items, y_positions):
+                x_edge = 1.05 * cx
+                y_edge = 1.05 * cy
+                ax.annotate(
+                    f"{label}\n¥{val:,.0f}  ({pct:.1f}%)",
+                    xy=(x_edge, y_edge),
+                    xytext=(x_text, y_t),
+                    ha="left" if x_text > 0 else "right",
+                    va="center",
+                    fontsize=7.5, color="#333333",
+                    arrowprops=dict(
+                        arrowstyle="-",
+                        color="#aaaaaa",
+                        lw=0.8,
+                        connectionstyle=f"angle,angleA=0,angleB={np.degrees(ang_mid):.0f}",
+                    ),
+                    bbox=bbox_props,
+                )
+
+        _layout_side(left_items, x_text=-1.45)
+        _layout_side(right_items, x_text=1.45)
+
+        # 扇区上百分比（占比≥8%时显示）
+        for wedge, val in zip(wedges, values):
+            pct = val / total * 100
+            if pct >= 8:
+                ang = np.deg2rad((wedge.theta2 + wedge.theta1) / 2.0)
+                x = 0.62 * np.cos(ang)
+                y = 0.62 * np.sin(ang)
+                ax.text(x, y, f"{pct:.1f}%", ha="center", va="center",
+                        fontsize=9, color="white", fontweight="bold")
+
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=16)
+        plt.tight_layout(pad=1.5)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight",
@@ -150,12 +186,12 @@ def _generate_pie_chart_html(data: dict, title: str) -> str:
 
     except Exception as e:
         print(f"⚠️ 饼图生成失败: {e}")
+        import traceback
+        traceback.print_exc()
         return ""
 
 
-# ═══════════════════════════════════════════════════════════
 # 文本解析辅助
-# ═══════════════════════════════════════════════════════════
 
 def _escape(text: str) -> str:
     return (text
@@ -204,16 +240,10 @@ def _render_table(header: list[str], rows: list[list[str]]) -> str:
     return html
 
 
-# ═══════════════════════════════════════════════════════════
 # 主解析器
-# ═══════════════════════════════════════════════════════════
 
-def _parse_report_text(text: str, charts: dict = None) -> str:
-    """
-    将纯文本报告解析为 HTML 片段。
-
-    charts: {标题文本: chart_html} — 在对应 ## 标题的列表后注入图表
-    """
+def _parse_report_text(text: str) -> str:
+    """将纯文本报告解析为 HTML 片段。"""
     lines = text.split("\n")
     html_parts = []
     i = 0
@@ -261,24 +291,6 @@ def _parse_report_text(text: str, charts: dict = None) -> str:
                 )
             first_h2 = False
             i += 1
-
-            # 如果此标题有对应图表：先收集后续列表项，再注入图表
-            if charts and level == 2 and heading_text in charts:
-                ul_items = []
-                while i < len(lines):
-                    m = re.match(r'^[-•*]\s+(.+)', lines[i].strip())
-                    if m:
-                        content = _apply_inline_formatting(_escape(m.group(1)))
-                        ul_items.append(f'<li style="{_CSS_LI}">{content}</li>')
-                        i += 1
-                    elif lines[i].strip() == "":
-                        i += 1
-                        continue
-                    else:
-                        break
-                if ul_items:
-                    html_parts.append(f'<ul style="{_CSS_UL}">{"".join(ul_items)}</ul>')
-                html_parts.append(charts[heading_text])
             continue
 
         # 中文数字标题
@@ -411,9 +423,26 @@ def _parse_report_text(text: str, charts: dict = None) -> str:
     return "\n".join(html_parts)
 
 
-# ═══════════════════════════════════════════════════════════
+# 图表注入（HTML 层：在指定标题对应章节末尾插入图表）
+
+def _inject_chart_after_section(html: str, keyword: str, chart_html: str) -> str:
+    """在 HTML 找到含 keyword 的 h2/h3 标题，在其章节末尾注入图表。
+
+    章节末尾 = 下一个同级标题或 <hr> 之前。
+    """
+    for tag in ("h2", "h3"):
+        pattern = re.compile(
+            r'(<' + tag + r'\s[^>]*>[^<]*' + re.escape(keyword) + r'[^<]*</' + tag + r'>)'
+            r'((?:(?!<' + tag + r'\s|<hr\s).)*)',
+            re.DOTALL,
+        )
+        m = pattern.search(html)
+        if m:
+            return html[:m.end()] + "\n" + chart_html + "\n" + html[m.end():]
+    return html
+
+
 # 邮件组装
-# ═══════════════════════════════════════════════════════════
 
 def build_html_email(
     summary: str, report: str, period_label: str, today_str: str,
@@ -424,18 +453,26 @@ def build_html_email(
 
     metrics: 可选，包含 收入分类/支出分类 等字段，用于生成饼图
     """
-    # 生成饼图
-    charts = {}
+    # 生成饼图 keyed by 标题关键词
+    charts = {}  # {"支出结构": html, "收入结构": html}
     if metrics:
-        income_chart = _generate_pie_chart_html(metrics.get("收入分类", {}), "收入构成")
-        expense_chart = _generate_pie_chart_html(metrics.get("支出分类", {}), "支出构成")
-        if income_chart:
-            charts["收入来源明细"] = income_chart
-        if expense_chart:
-            charts["支出分类全景"] = expense_chart
+        expense_data = metrics.get("支出分类", {})
+        if expense_data and any(v > 0 for v in expense_data.values()):
+            chart = _generate_pie_chart_html(expense_data, "支出构成")
+            if chart:
+                charts["支出结构"] = chart
+        income_data = metrics.get("收入分类", {})
+        if income_data and any(v > 0 for v in income_data.values()):
+            chart = _generate_pie_chart_html(income_data, "收入构成")
+            if chart:
+                charts["收入结构"] = chart
 
-    summary_html = _parse_report_text(summary, charts=charts)
+    summary_html = _parse_report_text(summary)
     report_html = _parse_report_text(report)
+
+    # 在对应标题章节末尾注入图表
+    for keyword, chart_html in charts.items():
+        report_html = _inject_chart_after_section(report_html, keyword, chart_html)
 
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
