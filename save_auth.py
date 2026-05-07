@@ -1,10 +1,8 @@
-"""
-本地运行一次，手动登录后自动保存完整的存储状态（包含 localStorage 和 Cookies）。
-保存的 auth_state.json 内容粘贴到 GitHub Secret: YIMU_AUTH_STATE
-"""
+"""本地运行一次，手动登录一木记账后自动保存 auth_state.json。"""
 import json
 import asyncio
 from playwright.async_api import async_playwright
+
 
 async def main():
     async with async_playwright() as p:
@@ -12,17 +10,14 @@ async def main():
         context = await browser.new_context()
         page = await context.new_page()
 
-        print("正在打开一木记账网页端，请在浏览器中手动登录（包括验证码）...")
+        print("请在浏览器中手动登录一木记账...")
         await page.goto("https://www.yimubill.com/")
+        await page.wait_for_selector("text=账单导出", timeout=120000)
 
-        print("请在浏览器里完成登录，登录成功后这里会自动继续...")
-        await page.wait_for_selector("text=账单导出", timeout=120000)  
-        print("检测到登录成功！正在保存完整的登录凭证 (Storage State)...")
-
+        print("登录成功，保存凭证...")
         await context.storage_state(path="auth_state.json")
-
-        print("✅ 登录状态已完整保存到 auth_state.json")
-        print("请打开 auth_state.json，复制全部内容，粘贴到 GitHub Secret 中")
+        print("已保存到 auth_state.json")
         await browser.close()
+
 
 asyncio.run(main())
