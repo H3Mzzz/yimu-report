@@ -167,9 +167,10 @@ def main():
         china_tz = timezone(timedelta(hours=8))
         today_str = datetime.now(china_tz).strftime("%Y年%m月%d日")
 
-        # 📝 写入记忆：持久化本次报告的关键信息，让下次运行时有上下文
+        metrics = _extract_metrics(df)
+
+        # 📝 写入记忆
         try:
-            metrics = _extract_metrics(df)
             add_insight_from_report(mode, report, metrics)
             save_last_report(mode, summary, metrics, report)
             print("📝 记忆已更新")
@@ -177,7 +178,7 @@ def main():
             print(f"⚠️ 记忆写入失败（不影响报告）: {mem_err}")
 
         email_body = f"{summary}\n\n{'='*50}\n\n{report}"
-        html_body = build_html_email(summary, report, period_label, today_str)
+        html_body = build_html_email(summary, report, period_label, today_str, metrics=metrics)
         send_email(
             subject=f"💰 {period_label}财务报告 · {today_str}",
             html_body=html_body,

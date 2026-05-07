@@ -19,11 +19,11 @@ def _base() -> str:
     return WEBDAV_BASE_URL.rstrip("/") + "/"
 
 
-def _folder_url() -> str:
+def _get_folder_url() -> str:
     return f"{_base()}{BACKUP_FOLDER}/"
 
 
-def _file_url(filename: str) -> str:
+def _get_file_url(filename: str) -> str:
     return f"{_base()}{BACKUP_FOLDER}/{filename}"
 
 
