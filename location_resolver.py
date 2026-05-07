@@ -28,7 +28,7 @@ import requests
 AMAP_KEY = os.environ.get("AMAP_API_KEY", "")
 CACHE_DIR = Path(__file__).parent / ".amap_cache"
 CACHE_TTL = 30 * 24 * 3600
-DEFAULT_CITY = os.environ.get("DEFAULT_GEOCODE_CITY", "蚌埠")
+DEFAULT_CITY = os.environ.get("DEFAULT_GEOCODE_CITY", "")
 
 
 # ── 缓存 ──
