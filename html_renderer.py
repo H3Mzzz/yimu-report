@@ -99,79 +99,40 @@ def _generate_pie_chart_html(data: dict, title: str) -> str:
             "#a18cd1", "#fbc2eb", "#8fd3f4", "#84fab0", "#cfd9df",
         ]
 
-        fig, ax = plt.subplots(figsize=(6.5, 4.5), dpi=150)
+        fig, ax = plt.subplots(figsize=(9, 6), dpi=150, constrained_layout=True)
         fig.patch.set_facecolor("white")
 
-        wedges, _, _ = ax.pie(
-            values, labels=None, autopct="",
+        # 构建图例标签（名称 + 金额 + 百分比）
+        legend_labels = [
+            f"{label}  ¥{val:,.0f}  ({val/total*100:.1f}%)"
+            for label, val in zip(labels, values)
+        ]
+
+        wedges, texts, autotexts = ax.pie(
+            values, labels=None, autopct=lambda pct: f"{pct:.1f}%" if pct >= 6 else "",
             colors=colors[: len(values)], startangle=90,
             wedgeprops={"linewidth": 1.5, "edgecolor": "white"},
-            pctdistance=0.85,
+            pctdistance=0.60,
+            textprops={"fontsize": 10, "color": "white", "fontweight": "bold"},
         )
 
-        # 引线标注：按象限分左右两组，同侧标签均匀排布避免重叠
-        bbox_props = dict(
-            boxstyle="round,pad=0.3", fc="white", ec="#cccccc", lw=0.8, alpha=0.95
-        )
+        # 底部图例（两列，避免过长）
+        ncol = 1 if len(labels) <= 3 else 2
+        ax.legend(
+            wedges, legend_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.12),
+            ncol=ncol,
+            fontsize=9,
+            frameon=True,
+            edgecolor="#e0e0e0",
+            facecolor="white",
+        ).set_zorder(10)
 
-        # 先收集左右两侧的项
-        left_items, right_items = [], []
-        for wedge, label, val in zip(wedges, labels, values):
-            ang_mid = np.deg2rad((wedge.theta2 + wedge.theta1) / 2.0)
-            cx, cy = np.cos(ang_mid), np.sin(ang_mid)
-            pct = val / total * 100
-            item = (wedge, label, val, pct, ang_mid, cx, cy)
-            if cx >= 0:
-                right_items.append(item)
-            else:
-                left_items.append(item)
-
-        # 同侧均匀分布 Y 坐标
-        def _layout_side(items, x_text, y_range=(-1.25, 1.25)):
-            n = len(items)
-            if n == 0:
-                return
-            if n == 1:
-                y_positions = [0.0]
-            else:
-                y_positions = list(np.linspace(y_range[0], y_range[1], n))
-            for (wedge, label, val, pct, ang_mid, cx, cy), y_t in zip(items, y_positions):
-                x_edge = 1.05 * cx
-                y_edge = 1.05 * cy
-                ax.annotate(
-                    f"{label}\n¥{val:,.0f}  ({pct:.1f}%)",
-                    xy=(x_edge, y_edge),
-                    xytext=(x_text, y_t),
-                    ha="left" if x_text > 0 else "right",
-                    va="center",
-                    fontsize=7.5, color="#333333",
-                    arrowprops=dict(
-                        arrowstyle="-",
-                        color="#aaaaaa",
-                        lw=0.8,
-                        connectionstyle=f"angle,angleA=0,angleB={np.degrees(ang_mid):.0f}",
-                    ),
-                    bbox=bbox_props,
-                )
-
-        _layout_side(left_items, x_text=-1.45)
-        _layout_side(right_items, x_text=1.45)
-
-        # 扇区上百分比（占比≥8%时显示）
-        for wedge, val in zip(wedges, values):
-            pct = val / total * 100
-            if pct >= 8:
-                ang = np.deg2rad((wedge.theta2 + wedge.theta1) / 2.0)
-                x = 0.62 * np.cos(ang)
-                y = 0.62 * np.sin(ang)
-                ax.text(x, y, f"{pct:.1f}%", ha="center", va="center",
-                        fontsize=9, color="white", fontweight="bold")
-
-        ax.set_title(title, fontsize=13, fontweight="bold", pad=16)
-        plt.tight_layout(pad=1.5)
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight",
+        fig.savefig(buf, format="png",
                     facecolor="white", edgecolor="none")
         plt.close(fig)
         buf.seek(0)
@@ -432,8 +393,8 @@ def _inject_chart_after_section(html: str, keyword: str, chart_html: str) -> str
     """
     for tag in ("h2", "h3"):
         pattern = re.compile(
-            r'(<' + tag + r'\s[^>]*>[^<]*' + re.escape(keyword) + r'[^<]*</' + tag + r'>)'
-            r'((?:(?!<' + tag + r'\s|<hr\s).)*)',
+            r'(<' + tag + r'(?:\s[^>]*)?>[^<]*' + re.escape(keyword) + r'[^<]*</' + tag + r'>)'
+            r'((?:(?!<' + tag + r'(?:\s|>)|<hr\s).)*)',
             re.DOTALL,
         )
         m = pattern.search(html)
