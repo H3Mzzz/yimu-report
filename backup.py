@@ -20,7 +20,9 @@ async def main():
     auth_state_json = os.environ.get("YIMU_AUTH_STATE")
     if not auth_state_json:
         try:
-            with open("auth_state.json", "r", encoding="utf-8") as f:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            auth_path = os.path.join(script_dir, "auth_state.json")
+            with open(auth_path, "r", encoding="utf-8") as f:
                 auth_state = json.load(f)
         except FileNotFoundError:
             raise RuntimeError("请设置 YIMU_AUTH_STATE 或提供 auth_state.json")
