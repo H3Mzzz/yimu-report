@@ -8,7 +8,11 @@
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
+
+# 确保脚本所在目录在 Python 路径中，避免 CWD 不同时导入失败
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_processor import parse_transactions, summarize, generate_comparison_summary, _extract_metrics
 from webdav import ensure_backup_folder, download_latest_backup
