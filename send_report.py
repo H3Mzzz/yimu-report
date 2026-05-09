@@ -6,6 +6,9 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
+# 确保脚本所在目录在 Python 路径中，避免 CWD 不同时导入失败
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from dotenv import load_dotenv
 load_dotenv()
 

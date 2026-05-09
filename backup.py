@@ -5,9 +5,14 @@
 """
 
 import os
+import sys
 import json
 import asyncio
 from datetime import datetime
+
+# 确保脚本所在目录在 Python 路径中，避免 CWD 不同时导入失败
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from download import download_excel
 from webdav import ensure_backup_folder, upload_backup, cleanup_old_backups
 
