@@ -463,7 +463,7 @@ def build_html_email(
 
   <!-- 页脚 -->
   <div style="{_CSS_FOOTER}">
-    一木 Report · 自动生成 · Powered by DeepSeek
+    一木 Report · 自动生成 · Powered by Agent
   </div>
 
 </div>
