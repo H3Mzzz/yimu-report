@@ -73,15 +73,10 @@ def parse_transactions(excel_bytes, mode, reference_date=None):
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).abs()
 
-    is_expense = df["类型"].str.contains("支出", na=False)
+    # 一木记账的"金额"列已经是实付金额（已扣除优惠/退款/报销后的净值）。
+    # 优惠/退款/报销列仅作信息记录，不在计算中二次扣减。
+    # 支出可为负（报销退款），保留符号让净支出求和自动核减。
     df["实际金额"] = df["原始金额"]
-    positive_expense = is_expense & (df["原始金额"] > 0)
-    df.loc[positive_expense, "实际金额"] = (
-        df.loc[positive_expense, "原始金额"]
-        - df.loc[positive_expense, "退款"]
-        - df.loc[positive_expense, "优惠"]
-        - df.loc[positive_expense, "报销"]
-    ).clip(lower=0)
 
     sub_renamed = rename_map.get(sub_cat_col) if sub_cat_col else None
     df["最终分类"] = df["分类"]
@@ -118,16 +113,26 @@ def summarize(df, period_label):
     real_expense = metrics["净支出"]
     net_balance = metrics["净结余"]
 
-    raw_expense = expense_df["原始金额"].sum()
+    # 一木记账的"金额"列已是实付净值，无需再扣减。
+    # 优惠/退款/报销列仅作信息展示（显示本期累计享受到的优惠额度）。
     total_disc = expense_df["优惠"].sum() if "优惠" in expense_df.columns else 0
     total_refund = expense_df["退款"].sum() if "退款" in expense_df.columns else 0
     total_reimb = expense_df["报销"].sum() if "报销" in expense_df.columns else 0
 
     lines = [
         f"📊 财务数据摘要（{period_label}）",
-        f"本周期账面原始总支出 ¥{raw_expense:,.2f}，"
-        f"经优惠(¥{total_disc:,.2f})、退款(¥{total_refund:,.2f})、报销抵扣(¥{total_reimb:,.2f})后，"
-        f"个人真实净支出为 ¥{real_expense:,.2f}。",
+        f"本周期净支出 ¥{real_expense:,.2f}",
+    ]
+    extras = []
+    if total_disc > 0:
+        extras.append(f"优惠 ¥{total_disc:,.2f}")
+    if total_refund > 0:
+        extras.append(f"退款 ¥{total_refund:,.2f}")
+    if total_reimb > 0:
+        extras.append(f"报销 ¥{total_reimb:,.2f}")
+    if extras:
+        lines.append(f"（期间累计享受：{'，'.join(extras)}）")
+    lines += [
         "## 核心指标",
         f"- 💰总收入：¥{total_income:,.2f}",
         f"- 💸 真实净支出：¥{real_expense:,.2f}",
