@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """一木记账数据获取模块。
 
-数据流：坚果云 WebDAV → 解析筛选 → JSON 摘要输出。
+数据流：坚果云 Custom.db → 解析筛选 → JSON 摘要输出。
 供 AI 助手通过 --data-only 模式调用，不调 AI、不发邮件。
 """
 
@@ -15,23 +15,19 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_processor import parse_transactions, summarize, generate_comparison_summary, _extract_metrics
-from webdav import ensure_backup_folder, download_latest_backup
 
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
+KNOWLEDGE_DB_PATH = os.path.expanduser("~/cow/knowledge/finance/data/Custom.db")
 
 
 def fetch_data(mode: str = "weekly") -> dict:
-    """从坚果云获取账单，返回结构化摘要（不调 AI、不发邮件）。"""
-    if not ensure_backup_folder():
-        raise RuntimeError("坚果云 WebDAV 不可用")
+    """从本地 Custom.db 获取账单，返回结构化摘要（不调 AI、不发邮件）。"""
+    if not os.path.exists(KNOWLEDGE_DB_PATH):
+        raise RuntimeError(f"数据库不存在: {KNOWLEDGE_DB_PATH}，请先运行 sync_db.py")
 
-    excel_bytes, filename = download_latest_backup()
-    if excel_bytes is None:
-        raise RuntimeError("坚果云无可用账单备份")
+    print(f"数据源: {KNOWLEDGE_DB_PATH}")
 
-    print(f"数据源: {filename}")
-
-    df, period_label = parse_transactions(excel_bytes, mode)
+    df, period_label = parse_transactions(KNOWLEDGE_DB_PATH, mode)
     if df.empty:
         return {"mode": mode, "period_label": period_label, "empty": True}
 
@@ -41,7 +37,7 @@ def fetch_data(mode: str = "weekly") -> dict:
     comparison_summary = None
     previous_label = None
     try:
-        df_prev, prev_label = parse_transactions(excel_bytes, f"previous_{mode}")
+        df_prev, prev_label = parse_transactions(KNOWLEDGE_DB_PATH, f"previous_{mode}")
         if not df_prev.empty:
             previous_label = prev_label
             comparison_summary = generate_comparison_summary(df, df_prev, period_label, previous_label)
