@@ -107,7 +107,7 @@
 | `WEBDAV_BASE_URL` | `https://dav.jianguoyun.com/dav/` | 坚果云 WebDAV |
 | `WEBDAV_BACKUP_FOLDER` | `账单备份` | 旧备份文件夹名 |
 | `WEBDAV_ZIP_FOLDER` | `一木记账` | DB zip 文件夹名 |
-| `ZIP_PASSWORD` | `2895285` | 加密 zip 密码 |
+| `ZIP_PASSWORD` | — | 加密 zip 密码 |
 
 ## 本地运行
 
