@@ -1,90 +1,97 @@
 #!/usr/bin/env python3
-"""一木记账数据结构化处理：解析 Excel、分类筛选、摘要生成、周期对比。"""
+"""一木记账数据结构化处理：从 SQLite 加载、分类筛选、摘要生成、周期对比。"""
 
-import io
+import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from location_resolver import enrich_transactions, area_summary
 
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
 
+# ── SQL 模板 ─────────────────────────────────────────────────
+_BASE_SQL = """
+SELECT
+    b.billid,
+    datetime(b.time / 1000, 'unixepoch', 'localtime') AS 日期,
+    b.cost AS 金额,
+    CASE WHEN pc.categoryid = 9 THEN '收入' ELSE '支出' END AS 类型,
+    pc.categoryname AS 分类,
+    cc.categoryname AS 二级分类,
+    a.assetname AS 账户,
+    b.remark AS 备注,
+    b.poiaddress AS 地址
+FROM bill b
+LEFT JOIN parentcategory pc ON b.parentcategoryid = pc.categoryid
+LEFT JOIN childcategory cc ON b.childcategoryid = cc.categoryid
+    AND b.childcategoryid != -1
+LEFT JOIN asset a ON b.assetid = a.assetid
+WHERE b.delete_lpcolumn = 0
+  AND b.cost != 0
+"""
 
-def _find_col(columns, keywords):
-    for kw in keywords:
-        match = next((c for c in columns if kw in str(c)), None)
-        if match:
-            return match
-    return None
 
+def load_from_sqlite(db_path, mode, reference_date=None):
+    """从 SQLite 数据库加载账单，筛选时间范围，返回 (DataFrame, period_label)。
 
-def parse_transactions(excel_bytes, mode, reference_date=None):
-    """解析 Excel，筛选指定时间范围，返回 (DataFrame, 时间描述)。"""
-    df = pd.read_excel(io.BytesIO(excel_bytes))
+    Args:
+        db_path: Custom.db 文件路径
+        mode: daily / weekly / monthly / previous_daily / previous_weekly / previous_monthly
+        reference_date: 参考日期（默认 datetime.now()）
+    """
+    now = reference_date or datetime.now()
+    days = MODE_DAYS_MAP.get(mode.replace("previous_", ""), 7)
 
-    cols = df.columns.tolist()
-    date_col = _find_col(cols, ["日期", "时间", "Date"])
-    amount_col = _find_col(cols, ["金额", "Amount"])
-    type_col = _find_col(cols, ["类型", "收支", "Type"])
-    cat_col = _find_col(cols, ["类别", "分类", "Category"])
-    sub_cat_col = _find_col(cols, ["二级分类", "Subcategory"])
-    account_col = _find_col(cols, ["账户", "Account"])
-    refund_col = _find_col(cols, ["退款", "Refund"])
-    disc_col = _find_col(cols, ["优惠", "Discount"])
-    reimb_col = _find_col(cols, ["报销金额", "报销", "Reimbursement"])
-    note_col = _find_col(cols, ["备注", "摘要", "Note", "Remark"])
-    tag_col = _find_col(cols, ["标签", "Tag"])
-    addr_col = _find_col(cols, ["地址", "Address", "Location"])
-
-    if not all([date_col, amount_col, type_col, cat_col]):
-        raise ValueError(f"核心列识别失败: {df.columns.tolist()}")
-
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col])
-
-    days = MODE_DAYS_MAP.get(mode, 7)
-    now = reference_date if reference_date else datetime.now()
+    def _date_epoch(dt):
+        """返回 dt 所在日期 00:00:00 本地时间的 Unix epoch（秒）。"""
+        midnight = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        return int(midnight.timestamp())
 
     if mode.startswith("previous_"):
-        base_mode = mode.replace("previous_", "")
-        base_days = MODE_DAYS_MAP.get(base_mode, 7)
-        end = now - timedelta(days=base_days)
-        start = end - timedelta(days=base_days)
-        period_label = f"过去 {base_days} 天（上一周期）"
-        df = df[(df[date_col] >= start) & (df[date_col] < end)].copy()
+        end = now - timedelta(days=days)
+        start = end - timedelta(days=days)
+        period_label = f"过去 {days} 天（上一周期）"
+        start_ts = _date_epoch(start)
+        end_ts = _date_epoch(end)
+        time_filter = f"AND b.time / 1000 >= {start_ts}\n  AND b.time / 1000 < {end_ts}"
     else:
         cutoff = now - timedelta(days=days)
         period_label = f"过去 {days} 天"
-        df = df[df[date_col] >= cutoff].copy()
+        cutoff_ts = _date_epoch(cutoff)
+        time_filter = f"AND b.time / 1000 >= {cutoff_ts}"
 
-    rename_map = {date_col: "日期", amount_col: "金额", type_col: "类型", cat_col: "分类"}
-    if sub_cat_col:
-        rename_map[sub_cat_col] = "二级分类"
-    for col, name in [(account_col, "账户"), (note_col, "备注"), (tag_col, "标签"),
-                       (disc_col, "优惠"), (refund_col, "退款"), (reimb_col, "报销"),
-                       (addr_col, "地址")]:
-        if col:
-            rename_map[col] = name
-    df = df.rename(columns=rename_map)
+    sql = _BASE_SQL + "\n  " + time_filter + "\nORDER BY b.time DESC"
 
+    conn = sqlite3.connect(db_path)
+    try:
+        df = pd.read_sql_query(sql, conn, parse_dates=["日期"])
+    finally:
+        conn.close()
+
+    if df.empty:
+        return df, period_label
+
+    # ── 后处理：对齐下游列名 ──
     df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
-    for col in ["退款", "优惠", "报销"]:
-        if col not in df.columns:
-            df[col] = 0.0
-        else:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).abs()
-
-    # 一木记账的"金额"列已经是实付金额（已扣除优惠/退款/报销后的净值）。
-    # 优惠/退款/报销列仅作信息记录，不在计算中二次扣减。
-    # 支出可为负（报销退款），保留符号让净支出求和自动核减。
+    # cost 已是 App 处理后的净值，正数=支出/收入，负数=报销/退款抵消
     df["实际金额"] = df["原始金额"]
 
-    sub_renamed = rename_map.get(sub_cat_col) if sub_cat_col else None
+    # 二级分类优先于一级分类
+    has_sub = df["二级分类"].notna() & (df["二级分类"].astype(str).str.strip() != "")
     df["最终分类"] = df["分类"]
-    if sub_renamed and sub_renamed in df.columns:
-        has_sub = df[sub_renamed].notna() & (df[sub_renamed].astype(str).str.strip() != "")
-        df.loc[has_sub, "最终分类"] = df.loc[has_sub, sub_renamed]
+    df.loc[has_sub, "最终分类"] = df.loc[has_sub, "二级分类"]
+
+    # 保证下游需要的列存在
+    for col in ["优惠", "退款", "报销", "标签"]:
+        if col not in df.columns:
+            df[col] = 0.0
 
     return df, period_label
+
+
+# ── 旧接口兼容：parse_transactions 转发到 load_from_sqlite ──
+def parse_transactions(db_path, mode, reference_date=None):
+    """兼容旧调用签名，转发到 load_from_sqlite。"""
+    return load_from_sqlite(db_path, mode, reference_date)
 
 
 def _format_clusters(clusters):
@@ -113,8 +120,6 @@ def summarize(df, period_label):
     real_expense = metrics["净支出"]
     net_balance = metrics["净结余"]
 
-    # 一木记账的"金额"列已是实付净值，无需再扣减。
-    # 优惠/退款/报销列仅作信息展示（显示本期累计享受到的优惠额度）。
     total_disc = expense_df["优惠"].sum() if "优惠" in expense_df.columns else 0
     total_refund = expense_df["退款"].sum() if "退款" in expense_df.columns else 0
     total_reimb = expense_df["报销"].sum() if "报销" in expense_df.columns else 0
@@ -134,32 +139,32 @@ def summarize(df, period_label):
         lines.append(f"（期间累计享受：{'，'.join(extras)}）")
     lines += [
         "## 核心指标",
-        f"- 💰总收入：¥{total_income:,.2f}",
-        f"- 💸 真实净支出：¥{real_expense:,.2f}",
-        f"- 🏦净结余：¥{net_balance:,.2f}",
+        f" - 💰总收入：¥{total_income:,.2f}",
+        f" - 💸 真实净支出：¥{real_expense:,.2f}",
+        f" - 🏦净结余：¥{net_balance:,.2f}",
     ]
     if total_income > 0:
-        lines.append(f"- 📈储蓄率：{net_balance/total_income*100:.1f}%")
+        lines.append(f" - 📈储蓄率：{net_balance/total_income*100:.1f}%")
     else:
-        lines.append("- 储蓄率：无收入数据")
+        lines.append(" - 储蓄率：无收入数据")
 
     if total_income > 0:
         lines += ["## 收入来源明细"]
         income_by_cat = income_df.groupby("最终分类")["原始金额"].sum().sort_values(ascending=False)
         for cat, amt in income_by_cat.items():
-            lines.append(f"- {cat}：¥{amt:,.2f}（{amt/total_income*100:.1f}%）")
+            lines.append(f" - {cat}：¥{amt:,.2f}（{amt/total_income*100:.1f}%）")
 
     lines += ["## 支出分类全景"]
     expense_by_cat = {k: v for k, v in metrics["支出分类"].items() if v > 0}
     for cat, amt in sorted(expense_by_cat.items(), key=lambda x: x[1], reverse=True):
         pct = amt / real_expense * 100 if real_expense else 0
-        lines.append(f"- {cat}：¥{amt:,.2f}（{pct:.1f}%）")
+        lines.append(f" - {cat}：¥{amt:,.2f}（{pct:.1f}%）")
 
     freq_small = metrics["小额高频"]
     if freq_small:
         lines += ["☕ 频繁小额支出（单笔≤30元，出现5次及以上）"]
         for cat in sorted(freq_small, key=lambda c: freq_small[c]["次数"], reverse=True):
-            lines.append(f"- {cat}：共 {freq_small[cat]['次数']} 次，累计 ¥{freq_small[cat]['总额']:,.2f}")
+            lines.append(f" - {cat}：共 {freq_small[cat]['次数']} 次，累计 ¥{freq_small[cat]['总额']:,.2f}")
 
     if "地址" in df.columns:
         addr_expense = expense_df[expense_df["地址"].notna() & (expense_df["地址"].astype(str).str.strip() != "")]
@@ -181,7 +186,7 @@ def summarize(df, period_label):
         if has_note and pd.notna(row.get("备注")) and str(row.get("备注")).strip():
             extras.append(f"📝 {row['备注']}")
         extra_str = f"（{' | '.join(extras)}）" if extras else ""
-        lines.append(f"- {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
+        lines.append(f" - {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
 
     return "\n".join(lines)
 

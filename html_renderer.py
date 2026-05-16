@@ -415,18 +415,18 @@ def build_html_email(
     metrics: 可选，包含 收入分类/支出分类 等字段，用于生成饼图
     """
     # 生成饼图 keyed by 标题关键词
-    charts = {}  # {"支出结构": html, "收入结构": html}
+    charts = {}  # {"支出分类全景": html, "收入来源明细": html}
     if metrics:
         expense_data = metrics.get("支出分类", {})
         if expense_data and any(v > 0 for v in expense_data.values()):
             chart = _generate_pie_chart_html(expense_data, "支出构成")
             if chart:
-                charts["支出结构"] = chart
+                charts["支出分类全景"] = chart
         income_data = metrics.get("收入分类", {})
         if income_data and any(v > 0 for v in income_data.values()):
             chart = _generate_pie_chart_html(income_data, "收入构成")
             if chart:
-                charts["收入结构"] = chart
+                charts["收入来源明细"] = chart
 
     summary_html = _parse_report_text(summary)
     report_html = _parse_report_text(report)

@@ -16,30 +16,17 @@ from html_renderer import build_html_email
 from send_mail import send_email
 from data_processor import parse_transactions, _extract_metrics
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "cow", "knowledge", "finance", "data")
-
 MODE_LABELS = {"daily": "日报", "weekly": "周报", "monthly": "月报"}
 
 
-def _find_latest_xlsx():
-    if not os.path.isdir(DATA_DIR):
-        return None
-    xlsx_files = sorted([f for f in os.listdir(DATA_DIR) if f.endswith(".xlsx")], reverse=True)
-    return os.path.join(DATA_DIR, xlsx_files[0]) if xlsx_files else None
-
-
 def get_latest_metrics(mode):
-    """从本地知识库读取最新账单，提取饼图所需的分类指标。"""
+    """从 SQLite 数据库提取饼图所需的分类指标。"""
     try:
-        china_tz = timezone(timedelta(hours=8))
-        today_file = os.path.join(DATA_DIR, f"bills_{datetime.now(china_tz).strftime('%Y-%m-%d')}.xlsx")
-        path = today_file if os.path.exists(today_file) else _find_latest_xlsx()
-        if path is None:
+        db_path = os.path.join(os.path.expanduser("~/cow/knowledge/finance/data"), "Custom.db")
+        if not os.path.exists(db_path):
+            print(f"数据库不存在: {db_path}")
             return {}
-        with open(path, "rb") as f:
-            excel_bytes = f.read()
-        df, _ = parse_transactions(excel_bytes, mode)
+        df, _ = parse_transactions(db_path, mode)
         if df.empty:
             return {}
         return _extract_metrics(df)
