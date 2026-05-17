@@ -46,7 +46,7 @@
 | 资产账户 | 25 个 |
 | 退款记录 | 143 条（¥27,310） |
 | 有地址数据 | 132 条（2.2%） |
-| zip 密码 | 2895285 |
+| zip 密码 | 通过 `ZIP_PASSWORD` 环境变量配置 |
 | zip 路径 | 坚果云 /一木记账/6.4.8_auto_04290236.zip |
 
 ---
@@ -67,7 +67,7 @@ def download_custom_db():
     流程：
     1. list_zip_files() 获取最新 zip 文件名
     2. requests.get() 下载 zip 到临时文件
-    3. subprocess: 7z x -p2895285 -o/tmp/ <zip> -y
+    3. subprocess: 7z x -p$ZIP_PASSWORD -o/tmp/ <zip> -y
     4. 读取 /tmp/Custom.db → return bytes
     5. 清理临时文件
     """

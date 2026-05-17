@@ -19,7 +19,9 @@ WEBDAV_BASE_URL = os.environ.get("WEBDAV_BASE_URL", "https://dav.jianguoyun.com/
 WEBDAV_USERNAME = os.environ.get("WEBDAV_USERNAME", "")
 WEBDAV_PASSWORD = os.environ.get("WEBDAV_PASSWORD", "")
 ZIP_FOLDER = os.environ.get("WEBDAV_ZIP_FOLDER", "一木记账")
-ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD", "2895285")
+ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD", "")
+if not ZIP_PASSWORD:
+    raise RuntimeError("请设置 ZIP_PASSWORD 环境变量")
 
 KNOWLEDGE_DATA_DIR = os.path.expanduser("~/cow/knowledge/finance/data")
 DB_FILENAME = "Custom.db"
