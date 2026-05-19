@@ -28,6 +28,8 @@
 
 ## 文件说明
 
+### 核心模块
+
 | 文件 | 职责 |
 |------|------|
 | `sync_db.py` | DB 同步：从坚果云下载加密 zip → 7z 解密 → 保存 Custom.db |
@@ -41,6 +43,22 @@
 | `webdav.py` | 坚果云 WebDAV 客户端：上传/下载/列表/清理 |
 | `download.py` | [旧] Playwright 无头浏览器：登录一木记账 → 导出 Excel（保留备用） |
 | `save_auth.py` | 本地工具：手动登录一木记账并保存 auth_state.json |
+
+### Skills（Agent 技能）
+
+| 目录 | 说明 |
+|------|------|
+| `skills/bill-analyzer/` | 账单分析技能：筛选/统计/What-If 沙盘/月度对比 |
+| `skills/send-email/` | 邮件发送技能 |
+
+### Templates（知识库模板）
+
+| 文件 | 说明 |
+|------|------|
+| `templates/knowledge/budget-config.md` | 月度预算配置 |
+| `templates/knowledge/consumption-profile.md` | 消费画像 |
+| `templates/knowledge/daily-insights.md` | 日报洞察 |
+| `templates/knowledge/weekly-insights.md` | 周报洞察 |
 
 ## 定时任务（scheduler）
 
