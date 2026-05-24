@@ -42,11 +42,13 @@ SELECT
     cc.categoryname AS 二级分类,
     '' AS 账户,
     COALESCE(
-        (SELECT json_extract(ri.refundinfos, '$.remark')
-         FROM refund_refundinfos ri
-         WHERE ri.refund_id = r.id
-         ORDER BY ri.rowid
-         LIMIT 1),
+        NULLIF(
+            (SELECT GROUP_CONCAT(json_extract(ri.refundinfos, '$.remark'), '; ')
+             FROM refund_refundinfos ri
+             WHERE ri.refund_id = r.id
+               AND json_extract(ri.refundinfos, '$.remark') != ''),
+            ''
+        ),
         b.remark, ''
     ) AS 备注,
     '' AS 地址
@@ -64,7 +66,7 @@ def load_refunds_from_sqlite(db_path, cutoff_ts=None, start_ts=None, end_ts=None
     time_filters = []
     if start_ts is not None:
         time_filters.append(f"r.updatetime / 1000 >= {start_ts}")
-    if cutoff_ts is not None:
+    elif cutoff_ts is not None:
         time_filters.append(f"r.updatetime / 1000 >= {cutoff_ts}")
     if end_ts is not None:
         time_filters.append(f"r.updatetime / 1000 < {end_ts}")
