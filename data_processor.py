@@ -29,6 +29,74 @@ WHERE b.delete_lpcolumn = 0
   AND b.cost != 0
 """
 
+# ── 退款 SQL ─────────────────────────────────────────────────
+# 从 refund 表加载退款记录，关联 bill 获取分类信息，
+# 从 refund_refundinfos 获取退款备注。
+_REFUND_SQL = """
+SELECT
+    r.billid,
+    datetime(r.updatetime / 1000, 'unixepoch', 'localtime') AS 日期,
+    r.refundnum AS 金额,
+    '退款' AS 类型,
+    COALESCE(pc.categoryname, '其他') AS 分类,
+    cc.categoryname AS 二级分类,
+    '' AS 账户,
+    COALESCE(
+        (SELECT json_extract(ri.refundinfos, '$.remark')
+         FROM refund_refundinfos ri
+         WHERE ri.refund_id = r.id
+         ORDER BY ri.rowid
+         LIMIT 1),
+        b.remark, ''
+    ) AS 备注,
+    '' AS 地址
+FROM refund r
+LEFT JOIN bill b ON b.billid = r.billid
+LEFT JOIN parentcategory pc ON b.parentcategoryid = pc.categoryid
+LEFT JOIN childcategory cc ON b.childcategoryid = cc.categoryid
+    AND b.childcategoryid != -1
+WHERE r.delete_lpcolumn = 0
+"""
+
+
+def load_refunds_from_sqlite(db_path, cutoff_ts=None, start_ts=None, end_ts=None):
+    """从 refund 表加载退款记录，返回与 bills 相同结构的 DataFrame。"""
+    time_filters = []
+    if start_ts is not None:
+        time_filters.append(f"r.updatetime / 1000 >= {start_ts}")
+    if cutoff_ts is not None:
+        time_filters.append(f"r.updatetime / 1000 >= {cutoff_ts}")
+    if end_ts is not None:
+        time_filters.append(f"r.updatetime / 1000 < {end_ts}")
+
+    sql = _REFUND_SQL
+    if time_filters:
+        sql += "  AND " + "\n  AND ".join(time_filters) + "\n"
+    sql += "\nORDER BY r.updatetime DESC"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        df = pd.read_sql_query(sql, conn, parse_dates=["日期"])
+    finally:
+        conn.close()
+
+    if df.empty:
+        return df
+
+    # 后处理：与 bill DataFrame 对齐
+    df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
+    df["实际金额"] = df["原始金额"]
+
+    has_sub = df["二级分类"].notna() & (df["二级分类"].astype(str).str.strip() != "")
+    df["最终分类"] = df["分类"]
+    df.loc[has_sub, "最终分类"] = df.loc[has_sub, "二级分类"]
+
+    for col in ["优惠", "退款", "报销", "标签"]:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    return df
+
 
 def load_from_sqlite(db_path, mode, reference_date=None):
     """从 SQLite 数据库加载账单，筛选时间范围，返回 (DataFrame, period_label)。
@@ -45,6 +113,8 @@ def load_from_sqlite(db_path, mode, reference_date=None):
         """返回 dt 所在日期 00:00:00 本地时间的 Unix epoch（秒）。"""
         midnight = dt.replace(hour=0, minute=0, second=0, microsecond=0)
         return int(midnight.timestamp())
+
+    cutoff_ts, start_ts, end_ts = None, None, None
 
     if mode.startswith("previous_"):
         end = now - timedelta(days=days)
@@ -67,23 +137,38 @@ def load_from_sqlite(db_path, mode, reference_date=None):
     finally:
         conn.close()
 
-    if df.empty:
+    # ── 加载退款记录 ──
+    refund_kwargs = {}
+    if mode.startswith("previous_"):
+        refund_kwargs = {"start_ts": start_ts, "end_ts": end_ts}
+    else:
+        refund_kwargs = {"cutoff_ts": cutoff_ts}
+    refund_df = load_refunds_from_sqlite(db_path, **refund_kwargs)
+
+    if df.empty and refund_df.empty:
         return df, period_label
 
-    # ── 后处理：对齐下游列名 ──
-    df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
-    # cost 已是 App 处理后的净值，正数=支出/收入，负数=报销/退款抵消
-    df["实际金额"] = df["原始金额"]
+    # ── 后处理（账单）──
+    if not df.empty:
+        df["原始金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0)
+        # cost 已是 App 处理后的净值，正数=支出/收入，负数=报销/退款抵消
+        df["实际金额"] = df["原始金额"]
 
-    # 二级分类优先于一级分类
-    has_sub = df["二级分类"].notna() & (df["二级分类"].astype(str).str.strip() != "")
-    df["最终分类"] = df["分类"]
-    df.loc[has_sub, "最终分类"] = df.loc[has_sub, "二级分类"]
+        # 二级分类优先于一级分类
+        has_sub = df["二级分类"].notna() & (df["二级分类"].astype(str).str.strip() != "")
+        df["最终分类"] = df["分类"]
+        df.loc[has_sub, "最终分类"] = df.loc[has_sub, "二级分类"]
 
-    # 保证下游需要的列存在
-    for col in ["优惠", "退款", "报销", "标签"]:
-        if col not in df.columns:
-            df[col] = 0.0
+        # 保证下游需要的列存在
+        for col in ["优惠", "退款", "报销", "标签"]:
+            if col not in df.columns:
+                df[col] = 0.0
+
+    # ── 合并账单 + 退款 ──
+    if not df.empty and not refund_df.empty:
+        df = pd.concat([df, refund_df], ignore_index=True)
+    elif df.empty:
+        df = refund_df
 
     return df, period_label
 
@@ -114,6 +199,7 @@ def summarize(df, period_label):
     """根据筛选后的 DataFrame 生成文本摘要（供 AI 分析）。"""
     income_df = df[df["类型"].str.contains("收入", na=False)]
     expense_df = df[df["类型"].str.contains("支出", na=False)]
+    refund_df = df[df["类型"].str.contains("退款", na=False)]
 
     metrics = _extract_metrics(df)
     total_income = metrics["总收入"]
@@ -121,8 +207,8 @@ def summarize(df, period_label):
     net_balance = metrics["净结余"]
 
     total_disc = expense_df["优惠"].sum() if "优惠" in expense_df.columns else 0
-    total_refund = expense_df["退款"].sum() if "退款" in expense_df.columns else 0
     total_reimb = expense_df["报销"].sum() if "报销" in expense_df.columns else 0
+    total_refund = float(refund_df["原始金额"].sum()) if not refund_df.empty else 0
 
     lines = [
         f"📊 财务数据摘要（{period_label}）",
@@ -131,8 +217,6 @@ def summarize(df, period_label):
     extras = []
     if total_disc > 0:
         extras.append(f"优惠 ¥{total_disc:,.2f}")
-    if total_refund > 0:
-        extras.append(f"退款 ¥{total_refund:,.2f}")
     if total_reimb > 0:
         extras.append(f"报销 ¥{total_reimb:,.2f}")
     if extras:
@@ -143,6 +227,8 @@ def summarize(df, period_label):
         f" - 💸 真实净支出：¥{real_expense:,.2f}",
         f" - 🏦净结余：¥{net_balance:,.2f}",
     ]
+    if total_refund > 0:
+        lines.append(f" - 🔄 退款到账：¥{total_refund:,.2f}（{len(refund_df)}笔）")
     if total_income > 0:
         lines.append(f" - 📈储蓄率：{net_balance/total_income*100:.1f}%")
     else:
@@ -187,6 +273,16 @@ def summarize(df, period_label):
             extras.append(f"📝 {row['备注']}")
         extra_str = f"（{' | '.join(extras)}）" if extras else ""
         lines.append(f" - {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['实际金额']:,.2f} {extra_str}")
+
+    # 退款明细
+    if not refund_df.empty:
+        lines.append("")
+        lines.append("## 🔄 退款明细")
+        for _, row in refund_df.iterrows():
+            remark = ""
+            if pd.notna(row.get("备注")) and str(row["备注"]).strip():
+                remark = f" 📝{row['备注']}"
+            lines.append(f" - {row['日期'].strftime('%m/%d')} | {row['最终分类']} | ¥{row['原始金额']:,.2f}{remark}")
 
     return "\n".join(lines)
 
