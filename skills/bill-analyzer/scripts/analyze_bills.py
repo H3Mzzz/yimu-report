@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-账单筛选分析工具 — 从本地 xlsx 账单中按时间/分类/金额筛选并生成摘要
+账单筛选分析工具 — 从 xlsx 账单或 SQLite 数据库中按时间/分类/金额筛选并生成摘要。
+
+数据源优先级：xlsx 文件（--file/--list-files） > Custom.db（默认）。
+cron 日报/周报走 data_processor.py 直接读 SQLite，本脚本主要用于独立分析。
 
 用法：
     # 最近 7 天
@@ -10,8 +13,9 @@
     # 指定日期范围
     python analyze_bills.py --from 2026-05-01 --to 2026-05-07
 
-    # 本月
+    # 本月 / 上月
     python analyze_bills.py --month current
+    python analyze_bills.py --month last
 
     # 指定分类
     python analyze_bills.py --days 30 --category 餐饮
@@ -25,11 +29,11 @@
     # 完整模式（输出所有分析维度）
     python analyze_bills.py --days 7 --full
 
-    # 指定数据文件
-    python analyze_bills.py --file bills_2026-05-07.xlsx --days 7
+    # What-If 沙盘（预算从数据库读取）
+    python analyze_bills.py --whatif 500 --json
 
-    # 列出可用数据文件
-    python analyze_bills.py --list-files
+    # 本月 vs 上月同期对比
+    python analyze_bills.py --compare --json
 
     # 输出 JSON（供程序消费）
     python analyze_bills.py --days 7 --json

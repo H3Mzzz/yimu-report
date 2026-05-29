@@ -11,37 +11,39 @@ metadata:
 
 Email is sent via QQ Mail SMTP (端口 465, SSL).
 
-Environment variables (already configured):
-- `MAIL_USER` — sender email (e.g. `1021348725@qq.com`)
+Environment variables (configure in ~/.hermes/.env):
+- `MAIL_USER` — sender email (e.g. `1094552470@qq.com`)
 - `MAIL_PASSWORD` — QQ Mail authorization code (not login password)
 - `MAIL_TO` — default recipient (can be overridden)
+
+> ⚠️ 这些环境变量尚未在 ~/.hermes/.env 中配置，使用前需要先设置。
 
 ## Usage
 
 Run the script with subject and body:
 
 ```bash
-python3 "<base_dir>/scripts/send_mail.py" --subject "主题" --body "正文内容"
+python3 "~/.hermes/skills/send-email/scripts/send_mail.py" --subject "主题" --body "正文内容"
 ```
 
 For HTML body:
 ```bash
-python3 "<base_dir>/scripts/send_mail.py" --subject "主题" --body "<h1>标题</h1><p>内容</p>"
+python3 "~/.hermes/skills/send-email/scripts/send_mail.py" --subject "主题" --body "<h1>标题</h1><p>内容</p>"
 ```
 
 For file body:
 ```bash
-python3 "<base_dir>/scripts/send_mail.py" --subject "主题" --body-file /path/to/body.html
+python3 "~/.hermes/skills/send-email/scripts/send_mail.py" --subject "主题" --body-file /path/to/body.html
 ```
 
 Override recipient:
 ```bash
-python3 "<base_dir>/scripts/send_mail.py" --subject "主题" --body "内容" --to "other@example.com"
+python3 "~/.hermes/skills/send-email/scripts/send_mail.py" --subject "主题" --body "内容" --to "other@example.com"
 ```
 
 Attach files:
 ```bash
-python3 "<base_dir>/scripts/send_mail.py" --subject "主题" --body "内容" --attach /path/to/file.pdf
+python3 "~/.hermes/skills/send-email/scripts/send_mail.py" --subject "主题" --body "内容" --attach /path/to/file.pdf
 ```
 
 ## Parameters
