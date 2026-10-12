@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from download import download_excel
 from webdav import ensure_backup_folder, upload_backup, cleanup_old_backups
 
-KNOWLEDGE_DATA_DIR = os.path.expanduser("~/cow/knowledge/finance/data")
+KNOWLEDGE_DATA_DIR = os.path.expanduser("~/knowledge/finance/data")
 
 
 async def main():

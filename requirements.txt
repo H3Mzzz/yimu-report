@@ -1,5 +1,15 @@
-openai
-playwright
+# 一木财务报告系统 — 运行时依赖
+# 目标解释器：/usr/bin/python3 (3.10.x)；服务器上 python3 默认可能是 Hermes 自带的 3.14，务必用绝对路径
+# 另有系统级依赖（非 pip）：7z（解密坚果云 zip）→ apt-get install -y p7zip-full
+
 pandas
-openpyxl
+numpy
+matplotlib
+scikit-learn
 requests
+python-dotenv
+playwright
+
+# 已移除（源码中已无 import）：
+#   openai   — 旧 DeepSeek/xlsx 流程遗留
+#   openpyxl — 旧 xlsx 数据源遗留（现为 SQLite）

@@ -1,164 +1,123 @@
-# 一木 Report 💰
+# 一木财务报告系统 (yimu-report)
 
-自动账单分析 + AI 财务报告系统。从一木记账 SQLite 数据库读取数据，经空间聚类处理后，由 AI 助手生成深度分析报告，通过邮件推送。
+> 基于「一木记账」App 导出的 SQLite 账单库，按周 / 月自动生成**中文财务分析报告**并通过邮件发送的自动化系统。
+> 由 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的 cron 定时驱动，报告内容由 AI 依据 `bill-analyzer` skill 生成。
 
-## 架构
+---
+
+## 它做什么
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  sync_db.py         DB 同步通道                       │
-│    坚果云 zip ─► 7z 解密 ─► Custom.db                │
-│                     └─► knowledge/finance/data/       │
-└──────────────────────────────────────────────────────┘
-    │
-    ▼  (scheduler 触发 AI 助手)
-┌──────────────────────────────────────────────────────┐
-│  AI 助手分析流程                                      │
-│    ├─► main.py --data-only    从 SQLite 读取 JSON 摘要 │
-│    │       └─► data_processor.py 解析/筛选/对比        │
-│    │              └─► location_resolver.py             │
-│    │                    高德地理编码 → AOI/POI/DBSCAN  │
-│    ├─► AI 深度分析（读取 knowledge/finance/ 历史知识）  │
-│    ├─► 更新知识库（消费画像/洞察/预算追踪）            │
-│    └─► send_report.py         Markdown → HTML → 邮件   │
-│           ├─► html_renderer.py  内联 CSS + 饼图渲染    │
-│           └─► send_mail.py      QQ 邮箱 SMTP           │
-└──────────────────────────────────────────────────────┘
+手机「一木记账」App
+      │  记账 / 分类 / 账户余额
+      ▼
+  坚果云 WebDAV（自动同步导出的 zip）
+      │  sync_bill_db.sh —— 每天 23:50 下载 + 解密 + 落库
+      ▼
+  ~/knowledge/finance/data/Custom.db   ← SQLite 唯一数据源
+      │  main.py —— 取数，输出结构化 JSON
+      ▼
+  AI 分析（bill-analyzer / finance-*-report skill）
+      │  Python + pandas 复核数字，撰写分析段落
+      ▼
+  邮件报告（send_report.py，HTML + 附件）
 ```
 
-## 文件说明
+**一句话**：把「每天记账」变成「每周一早上收到一份有人味儿的消费分析」。
 
-### 核心模块
+---
 
-| 文件 | 职责 |
-|------|------|
-| `sync_db.py` | DB 同步：从坚果云下载加密 zip → 7z 解密 → 保存 Custom.db |
-| `main.py` | 数据入口：从 SQLite 读取 → JSON 摘要输出（`--data-only` 模式） |
-| `data_processor.py` | SQLite 加载、收支分类、金额处理、周期筛选、对比引擎 |
-| `location_resolver.py` | 高德地图位置解析：地址→经纬度→AOI/POI/DBSCAN 三层标签→区域聚合 |
-| `html_renderer.py` | Markdown 报告 → 内联 CSS HTML 邮件 + matplotlib 饼图（引线标注） |
-| `send_report.py` | 桥接脚本：读取 Markdown 报告 + SQLite 指标 → HTML 邮件发送 |
-| `send_mail.py` | QQ 邮箱 SMTP 发送（HTML + 纯文本双版本） |
-| `backup.py` | [旧] Playwright 备份通道：一木记账网页 → Excel → 坚果云（保留备用） |
-| `webdav.py` | 坚果云 WebDAV 客户端：上传/下载/列表/清理 |
-| `download.py` | [旧] Playwright 无头浏览器：登录一木记账 → 导出 Excel（保留备用） |
-| `save_auth.py` | 本地工具：手动登录一木记账并保存 auth_state.json |
+## 特性
 
-### Skills（Agent 技能）
+- **纯本地数据**：账单只存在服务器本机 SQLite，不上传任何第三方。
+- **可复现的数字**：所有金额由 pandas 从 SQLite 直接算出，AI 只负责解读，不凭空生成数字。
+- **长期记忆**：消费画像、预算配置、历史洞察存于 `knowledge/` 目录，报告会引用并更新。
+- **中文优先**：分类、账户、报告文案全中文，适配国内记账习惯。
 
-| 目录 | 说明 |
-|------|------|
-| `skills/bill-analyzer/` | 账单分析技能：筛选/统计/What-If 沙盘/月度对比 |
-| `skills/send-email/` | 邮件发送技能 |
+---
 
-### Templates（知识库模板）
+## 目录结构
 
-| 文件 | 说明 |
-|------|------|
-| `templates/knowledge/budget-config.md` | 月度预算配置 |
-| `templates/knowledge/consumption-profile.md` | 消费画像 |
-| `templates/knowledge/daily-insights.md` | 日报洞察 |
-| `templates/knowledge/weekly-insights.md` | 周报洞察 |
+```
+yimu-report/
+├── main.py                  # 取数入口：读 SQLite → 结构化 JSON
+├── data_processor.py        # 核心统计逻辑（收入/支出/分类/账户/预算）
+├── html_renderer.py         # 报告 HTML 渲染
+├── location_resolver.py     # 消费地点反查（高德 API + 本地缓存）
+├── send_report.py           # 邮件发送（SMTP）
+├── send_mail.py             # 邮件发送底层
+├── sync_db.py               # 从坚果云同步 DB
+├── trim_knowledge.py        # 知识库归档精简
+├── backup.py                # 备用：账单下载 + 上传（playwright 登录）
+├── download.py / webdav.py / save_auth.py   # 备用上传链的组成模块
+├── sync_bill_db.sh          # cron 入口：同步脚本
+└── requirements.txt         # 运行时依赖
+```
 
-## 定时任务（scheduler）
+报告任务的**真实逻辑不在此仓库**，而在服务器的 Hermes skill 中（`bill-analyzer`、`finance-daily/weekly/monthly-report`），因为报告需要 AI 参与分析，属于 agent 流程而非纯脚本。
 
-| 任务 | 时间 | 内容 |
-|------|------|------|
-| DB 同步 | 每天 23:50 | `sync_db.py` 从坚果云下载 zip → 解密 → 保存 Custom.db |
-| 财务日报 | 每天 00:00 | AI 助手分析当日数据 → 发送邮件 |
-| 财务周报 | 每周一 00:05 | AI 助手分析周数据 + Agent 进化报告 |
-| 财务月报 | 每月1号 00:10 | AI 助手深度月报 + 战略级分析 |
+---
 
-## 数据源
+## 快速开始
 
-### SQLite 数据库（`Custom.db`）
-
-一木记账 App 的原始数据库，以加密 zip 形式同步到坚果云 `一木记账/` 文件夹。
-
-**关键数据语义**：
-
-- **收支判断**：`parentcategoryid = 9`（收入类），其余为支出
-- **金额**：`cost` 已是 App 处理后的净值。正数 = 正常支出/收入，负数 = 报销/退款抵消
-- **全额退款**：`cost` 已被 App 清零（cost=0），refund 表仅记录历史
-- ⚠️ **不要取 ABS(cost)**：负数 cost 是报销/调整，取绝对值会多算
-- ⚠️ **不要从 cost 扣减 refund 表**：refund 表仅作信息展示
-
-**时间戳**：`time` 字段为毫秒级 Unix 时间戳，`datetime(time/1000, 'unixepoch', 'localtime')`
-
-**分类**：一级分类 `parentcategory` + 二级分类 `childcategory`（`childcategoryid = -1` 表示无子分类）
-
-### 旧 Excel 通道（保留备用）
-
-`backup.py` + `download.py` 通过 Playwright 模拟登录一木记账网页版导出 Excel，上传坚果云。已不再作为主数据源，保留供紧急回退。
-
-## 地理编码（`location_resolver.py`）
-
-三层标签降级：AOI（面状区域）→ POI（点状地标）→ DBSCAN 空间聚类（r≈300m）
-- 30 天磁盘缓存（MD5 key），失败结果也缓存避免重复消耗配额
-- sklearn 不可用时自动回退纯 Python DBSCAN 实现
-
-## 邮件渲染（`html_renderer.py` + `send_report.py`）
-
-- Markdown → 内联 CSS HTML（兼容 QQ 邮箱/Gmail/Outlook）
-- matplotlib 饼图：引线标注 + 按章节注入（支出图在"支出分类全景"、收入图在"收入来源明细"）
-- 支出/收入无数据时自动跳过饼图
-
-## 环境变量
-
-### 必需
-
-| 变量 | 说明 |
-|------|------|
-| `QQ_EMAIL` | 发件 QQ 邮箱 |
-| `QQ_AUTH_CODE` | QQ 邮箱 SMTP 授权码 |
-| `AMAP_API_KEY` | 高德地图 Web 服务 API Key |
-| `WEBDAV_USERNAME` | 坚果云账号 |
-| `WEBDAV_PASSWORD` | 坚果云应用密码 |
-
-### 可选
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `TO_EMAIL` | 同 `QQ_EMAIL` | 收件邮箱 |
-| `MONTHLY_BUDGET` | `2000` | 月基准（元） |
-| `DEFAULT_GEOCODE_CITY` | — | 高德地理编码默认城市 |
-| `WEBDAV_BASE_URL` | `https://dav.jianguoyun.com/dav/` | 坚果云 WebDAV |
-| `WEBDAV_BACKUP_FOLDER` | `账单备份` | 旧备份文件夹名 |
-| `WEBDAV_ZIP_FOLDER` | `一木记账` | DB zip 文件夹名 |
-| `ZIP_PASSWORD` | — | 加密 zip 密码 |
-
-## 本地运行
+**环境**：Linux / macOS + Python 3.10+，另需系统级 `7z`（解密坚果云 zip）。
 
 ```bash
 pip install -r requirements.txt
-
-# 配置环境变量（或写入 .env）
-export QQ_EMAIL="your@qq.com"
-export QQ_AUTH_CODE="***"
-export AMAP_API_KEY="***"
-export WEBDAV_USERNAME="***"
-export WEBDAV_PASSWORD="***"
-
-# 同步数据库
-python sync_db.py
-
-# 获取数据（JSON 摘要）
-python main.py --data-only --mode daily
-
-# 发送报告（需要有 Markdown 报告文件）
-python send_report.py --mode daily --body-file /tmp/daily_report.md
 ```
 
-## 依赖
+**配置**（在 `~/.hermes/.env`，本仓库不含任何密钥）：
 
+```bash
+QQ_AUTH_CODE=<QQ邮箱SMTP授权码>
+WEBDAV_USER=<坚果云账号>
+WEBDAV_PASSWORD=<坚果云应用密码>
+ZIP_PASSWORD=<账单导出密码>
+AMAP_API_KEY=<高德地图Key，地点反查用>
 ```
-pandas
-requests
-matplotlib
-numpy
-python-dotenv
+
+**手动跑一次**：
+
+```bash
+# 1) 同步最新账单
+bash sync_bill_db.sh
+
+# 2) 取数（注意：首行是中文提示，跳掉才是纯 JSON）
+python3 main.py --data-only --mode weekly | tail -n +2
+
+# 3) 发送报告
+python3 send_report.py --mode weekly --body-file /tmp/report.md
 ```
 
-系统依赖：`7z`（`apt install p7zip-full`，用于解密坚果云 zip）
+`--mode` 支持 `daily` / `weekly` / `monthly`。
 
-可选：`scikit-learn`（DBSCAN 聚类加速，不安装则使用纯 Python 回退）
+---
+
+## 数据表说明
+
+系统实际只读 SQLite 中的 7 张表（库内共 130+ 张）：
+
+| 表 | 作用 |
+|---|---|
+| `bill` | 收支明细（金额、时间、分类、地点） |
+| `parentcategory` / `childcategory` | 一 / 二级分类 |
+| `asset` | 账户与余额 |
+| `budget` | 预算配置 |
+| `refund` / `refund_refundinfos` | 退款与退款备注 |
+
+---
+
+## 隐私与安全
+
+- **真实账单数据不进仓库**：数据库、导出文件、`.env` 均在 `.gitignore` 中。
+- 仓库工作区与提交历史均不含真实金额、真实账号、真实地点或任何凭据。
+
+---
+
+## 关于本仓库
+
+本仓库为**个人自用系统**的公开留档，主要用途是版本管理与架构参考。因含个人化的 skill 流程与私有数据依赖，**不建议直接 clone 后运行**；如需参考，请重点看 `data_processor.py` 的统计口径与 `main.py` 的取数结构。
+
+## License
+
+个人项目，未指定开源协议。代码仅供参考。

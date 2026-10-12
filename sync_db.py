@@ -23,7 +23,7 @@ ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD", "")
 if not ZIP_PASSWORD:
     raise RuntimeError("请设置 ZIP_PASSWORD 环境变量")
 
-KNOWLEDGE_DATA_DIR = os.path.expanduser("~/cow/knowledge/finance/data")
+KNOWLEDGE_DATA_DIR = os.path.expanduser("~/knowledge/finance/data")
 DB_FILENAME = "Custom.db"
 
 

@@ -22,7 +22,7 @@ MODE_LABELS = {"daily": "日报", "weekly": "周报", "monthly": "月报"}
 def get_latest_metrics(mode):
     """从 SQLite 数据库提取饼图所需的分类指标。"""
     try:
-        db_path = os.path.join(os.path.expanduser("~/cow/knowledge/finance/data"), "Custom.db")
+        db_path = os.path.join(os.path.expanduser("~/knowledge/finance/data"), "Custom.db")
         if not os.path.exists(db_path):
             print(f"数据库不存在: {db_path}")
             return {}

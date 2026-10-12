@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data_processor import parse_transactions, summarize, generate_comparison_summary, _extract_metrics
 
 MODE_DAYS_MAP = {"daily": 1, "weekly": 7, "monthly": 30}
-KNOWLEDGE_DB_PATH = os.path.expanduser("~/cow/knowledge/finance/data/Custom.db")
+KNOWLEDGE_DB_PATH = os.path.expanduser("~/knowledge/finance/data/Custom.db")
 
 
 def fetch_data(mode: str = "weekly") -> dict:
